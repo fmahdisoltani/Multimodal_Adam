@@ -303,7 +303,7 @@ class VIOptimizer(SecondOrderOptimizer):
             # self.update_postprocess(group, target='mean')
 
             # TODO: update pais
-            self.update_pais(group)
+            self.update_pais(group, loss)
 
             # copy mean to param
             params = group['params']
@@ -328,13 +328,13 @@ class VIOptimizer(SecondOrderOptimizer):
                     continue
                 m.data.add_(-group['lr'], d * grad*inv)  #HERE: * group['ratio']
 
-    def update_pais(self, group):
+    def update_pais(self, group, output):
         num_components = self.defaults['num_gmm_components']
         params = group['params']
         deltas = group['acc_delta']._accumulation
         pais = group['pais']
-        rhos = [[torch.log(p) for p in p_list] for p_list in pais]
-
+        rhos = [[torch.log(p)-torch.log(p_list[-1]) for p in p_list] for p_list in pais]
+        beta = self.defaults['lr']
         delta_K = [d_list[-1] for d_list in deltas] #last component for all param
 
         delta_diff = []
@@ -344,17 +344,9 @@ class VIOptimizer(SecondOrderOptimizer):
         # rho[c] = (1) * rho[c] - beta * (all_deltas[c] - all_deltas[-1]) * objective(sampled_z)
 
         for d_list, dk in zip(deltas, delta_K):
-            for d in d_list:
-                print(d - dk)
-                print("O" * 10)
-                delta_diff.append(d - dk)
+            delta_diff.append([d - dk for d in d_list])
 
-        for d_list in deltas:
-            for d in d_list:
-                grad = m.grad
-                if grad is None:
-                    continue
-                m.data.add_(-group['lr'], d * grad * inv)  # HERE: * group['ratio']
+        rhos = [[(r - d)*output*beta for r,d in zip(r_list, d_list)] for r_list, d_list in zip(rhos, delta_diff)]
 
     def update(self, group, target='params'):
         params = group[target]
@@ -551,3 +543,15 @@ def gaussian(x, mean, std):
 
 def gmm(x, means, variances, pais):
     return sum([pai * gaussian(x, mu, var) for (pai, mu, var) in zip(pais, means, variances)])
+
+def log_gaussian(x, mean, std):
+    return -0.5 * torch.log(2 * 3.14 * std ** 2) - (0.5 * (1 / (std ** 2)) * (x - mean) ** 2)
+
+def log_gmm(x, means, stds, log_pais):
+    component_log_densities = torch.stack([log_gaussian(x, mu, std) for (mu, std) in zip(means, stds)]).T
+    # log_weights = torch.log(pais)
+    log_weights = log_normalize(log_pais)
+    return torch.logsumexp(component_log_densities + log_weights, axis=-1, keepdims=False)
+
+def log_normalize(x):
+    return x - torch.logsumexp(x, 0)
