@@ -346,7 +346,10 @@ class VIOptimizer(SecondOrderOptimizer):
         for d_list, dk in zip(deltas, delta_K):
             delta_diff.append([d - dk for d in d_list])
 
-        rhos = [[(r - d)*output*beta for r,d in zip(r_list, d_list)] for r_list, d_list in zip(rhos, delta_diff)]
+        rhos = [[(r - d)*output*beta for r, d in zip(r_list, d_list)] for r_list, d_list in zip(rhos, delta_diff)]
+        pais = [torch.softmax(torch.stack(r_list), dim=0) for r_list in rhos]
+
+        group['pais'] = [[pai_list[i].data.detach() for i in range(num_components)] for pai_list in pais]
 
     def update(self, group, target='params'):
         params = group[target]
