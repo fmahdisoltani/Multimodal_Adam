@@ -150,9 +150,7 @@ class Curvature(object):
         setattr(module, 'grad_output', grad_output)
 
         self.update_in_backward(grad_output)
-        print(self.data)
-        print(self.ema)
-        print("K"*20)
+
         # adjust grad scale along with 'reduction' in loss function
         batch_size = grad_output.shape[0]
         # self.adjust_data_scale(batch_size**2)

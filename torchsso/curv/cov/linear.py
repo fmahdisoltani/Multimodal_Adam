@@ -233,10 +233,10 @@ class DiagGMMLinear(DiagCurvature):
         #     data_b = grad_grad.mean(dim=0) #[grad_grad.mean(dim=0) for _ in range(self.num_gmm_components)]  # f_out x 1
         #     self._data.append(data_b)
 
-        print("O" * 20)
-        print(self.data)
-        print(self.data[0].shape)
-        print("L" * 20)
-        # a = 1 / 0
+        # print("O" * 20)
+        # print(self.data)
+        # print(self.data[0].shape)
+        # print("L" * 20)
+        a = 1
 
 
