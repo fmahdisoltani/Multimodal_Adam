@@ -148,8 +148,8 @@ class DiagGMMLinear(DiagCurvature):
             # torch.stack([pp.view(-1) for pp in pai])
             stacked_pais = torch.stack(pai).view(self.num_gmm_components, -1)  #torch.stack([pp.view(-1) for pp in pai])
             selected_comp = torch.multinomial(stacked_pais.T, 1)  # 6 numbers
-            stacked_means = torch.stack(m).view(self.num_gmm_components, -1) #([mm.view(-1) for mm in m])
-            stacked_std = torch.stack(std).view(self.num_gmm_components, -1)# torch.stack([ss.view(-1) for ss in std])
+            stacked_means = torch.stack(m).view(self.num_gmm_components, -1)  # ([mm.view(-1) for mm in m])
+            stacked_std = torch.stack(std).view(self.num_gmm_components, -1)  # torch.stack([ss.view(-1) for ss in std])
             noise = torch.randn_like(p)
             smean = torch.stack([stacked_means[selected_comp[i], i] for i in range(len(selected_comp))])
             sstd =torch.stack([stacked_std[selected_comp[i], i] for i in range(len(selected_comp))])
