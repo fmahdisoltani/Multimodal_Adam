@@ -10,10 +10,12 @@ from torchvision import datasets, transforms, models
 import torchsso
 from torchsso.optim import SecondOrderOptimizer, VIOptimizer
 from torchsso.utils import Logger
+from torchsso.utils.generate_data import TinyDataset
 
 DATASET_CIFAR10 = 'CIFAR-10'
 DATASET_CIFAR100 = 'CIFAR-100'
 DATASET_MNIST = 'MNIST'
+DATASET_TINY = 'TINY'
 
 
 def main():
@@ -126,13 +128,20 @@ def main():
     elif args.dataset == DATASET_MNIST:
         num_classes = 10
         dataset_class = datasets.MNIST
+    elif args.dataset == DATASET_TINY:
+        num_classes = 2
+        # dataset_class = datasets.TINY
     else:
         assert False, f'unknown dataset {args.dataset}'
 
-    train_dataset = dataset_class(
-        root=args.root, train=True, download=args.download, transform=train_transform)
-    val_dataset = dataset_class(
-        root=args.root, train=False, download=args.download, transform=val_transform)
+    if args.dataset == DATASET_TINY:
+        train_dataset = TinyDataset()
+        val_dataset = train_dataset
+    else:
+        train_dataset = dataset_class(
+            root=args.root, train=True, download=args.download, transform=train_transform)
+        val_dataset = dataset_class(
+            root=args.root, train=False, download=args.download, transform=val_transform)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
