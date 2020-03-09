@@ -140,7 +140,10 @@ class VIOptimizer(SecondOrderOptimizer):
         for p, mean_list, std_list, pai_list in zip(params, means, stds, pais):
             p_value = p.data.detach()
             down = gmm(p_value, mean_list, std_list, pai_list)
-            deltas.append([gaussian(p_value, mean_list[i], std_list[i])/down for i in range(num_gmm_components)])
+            value = [gaussian(p_value, mean_list[i], std_list[i])/down for i in range(num_gmm_components)]
+            if torch.isnan(torch.sum(torch.stack(value))):
+                print("inside calculate_deltas")
+            deltas.append(value)
 
         # TODO: check if it is the correct thing to pass std
         return deltas
@@ -172,7 +175,7 @@ class VIOptimizer(SecondOrderOptimizer):
         for group in self.param_groups:
             params, mean = group['params'], group['mean']
             for p, m in zip(params, mean):
-                p.data.copy_(m.data)
+                p.data.copy_(m[0].data)
                 if getattr(p, 'grad', None) is not None \
                         and getattr(m, 'grad', None) is not None:
                     p.grad.copy_(m.grad)
@@ -240,17 +243,19 @@ class VIOptimizer(SecondOrderOptimizer):
             # sampling
             self.sample_params()
             # forward and backward
-            # ent_loss = 0
-            # for group in self.param_groups:
-            #     mean = group['mean']
-            #     params = group['params']
-            #     group['q_entropy'] = [log_gmm(p.data, m_list, s_list, pai_list) for p, m_list, s_list, pai_list
-            #                           in zip(params, group['mean'], group['curv'].std, group['pais'])]  # pais or log_pais
-            #     ent_loss += torch.sum(torch.stack([torch.sum(g) for g in group['q_entropy']]))
+            ent_loss = 0
+            for group in self.param_groups:
+                params = group['params']
+                group['q_entropy'] = [log_gmm(p.data, m_list, s_list, pai_list) for p, m_list, s_list, pai_list
+                                      in zip(params, group['mean'], group['curv'].std, group['pais'])]  # pais or log_pais
+                ent_loss += torch.sum(torch.stack([torch.sum(g) for g in group['q_entropy']]))
 
             # forward and backward
-            loss, output = closure()
-
+            loss, output = closure(ent_loss)
+            if torch.isnan(loss):
+                print("loss is nan")
+            if torch.isnan(torch.sum(output)):
+                print("output is nan")
             acc_loss.update(loss, scale=1/m)
             if output.ndim == 2:
                 prob = F.softmax(output, dim=1)
@@ -271,7 +276,7 @@ class VIOptimizer(SecondOrderOptimizer):
                 if curv is not None:
                     group['acc_curv'].update(curv.data, scale=1/m/n)
 
-                delta = self.calculate_deltas(group['mean'], curv.inv, group['pais'], params)
+                delta = self.calculate_deltas(group['mean'], curv.std, group['pais'], params)
                 group['acc_delta'].update(delta)
 
         loss, prob = acc_loss.get(), acc_prob.get()
@@ -294,8 +299,11 @@ class VIOptimizer(SecondOrderOptimizer):
             # update covariance
             mean, curv = group['mean'], group['curv']
             if curv is not None:
-                curv.step(update_std=(group['std_scale'] > 0))
-                curv.precondition_grad(mean)
+                curv.update_ema()
+                curv.update_std()
+                curv.update_inv()
+                # curv.step(update_std=(group['std_scale'] > 0))
+                # curv.precondition_grad(mean)
 
             # update mean
             # self.update_preprocess(group, target='mean', grad_type='preconditioned')
@@ -311,8 +319,12 @@ class VIOptimizer(SecondOrderOptimizer):
                 p.data.copy_(m_list[0].data)
                 p.grad.copy_(m_list[0].grad)  # TODO: set it to a sample? or the comp with highest pai
 
-        self.adjust_kl_weighting()
-
+        # self.adjust_kl_weighting()
+        print("O"*10)
+        print(group["mean"])
+        print(group["pais"])
+        print(group["curv"].inv)
+        print("P"*10)
         return loss, prob
 
     def update_mean(self, group):
@@ -334,7 +346,7 @@ class VIOptimizer(SecondOrderOptimizer):
         deltas = group['acc_delta']._accumulation
         pais = group['pais']
         rhos = [[torch.log(p)-torch.log(p_list[-1]) for p in p_list] for p_list in pais]
-        beta = self.defaults['lr']
+        beta = 0.001#self.defaults['lr']
         delta_K = [d_list[-1] for d_list in deltas] #last component for all param
 
         delta_diff = []
@@ -348,6 +360,8 @@ class VIOptimizer(SecondOrderOptimizer):
 
         rhos = [[(r - d)*output*beta for r, d in zip(r_list, d_list)] for r_list, d_list in zip(rhos, delta_diff)]
         pais = [torch.softmax(torch.stack(r_list), dim=0) for r_list in rhos]
+        if torch.isnan(torch.sum(torch.stack(pais))):
+            print("booya")
 
         group['pais'] = [[pai_list[i].data.detach() for i in range(num_components)] for pai_list in pais]
 
@@ -544,8 +558,8 @@ class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
 def gaussian(x, mean, std):
     return (1 / torch.sqrt(torch.FloatTensor([2*math.pi])*std**2)) * torch.exp(-((x - mean) ** 2.) / (2 * std**2))
 
-def gmm(x, means, variances, pais):
-    return sum([pai * gaussian(x, mu, var) for (pai, mu, var) in zip(pais, means, variances)])
+def gmm(x, means, stds, pais):
+    return sum([pai * gaussian(x, mu, std) for (pai, mu, std) in zip(pais, means, stds)])
 
 def log_gaussian(x, mean, std):
     return -0.5 * torch.log(2 * 3.14 * std ** 2) - (0.5 * (1 / (std ** 2)) * (x - mean) ** 2)
@@ -553,7 +567,7 @@ def log_gaussian(x, mean, std):
 def log_gmm(x, means, stds, log_pais):
     component_log_densities = torch.stack([log_gaussian(x, mu, std) for (mu, std) in zip(means, stds)]).T
     # log_weights = torch.log(pais)
-    log_weights = log_normalize(log_pais)
+    log_weights = log_normalize(torch.stack(log_pais))
     return torch.logsumexp(component_log_densities + log_weights, axis=-1, keepdims=False)
 
 def log_normalize(x):
