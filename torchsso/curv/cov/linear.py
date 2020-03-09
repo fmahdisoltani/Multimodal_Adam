@@ -174,9 +174,7 @@ class DiagGMMLinear(DiagCurvature):
         self.std = [[inv.sqrt() for inv in inv_list] for inv_list in self.inv]
 
     def update_ema(self): #updated
-        data = self.data
         ema = self.ema
-        ema_max = self.ema_max
         beta = self.ema_decay
         delta = self.delta
 
@@ -213,25 +211,24 @@ class DiagGMMLinear(DiagCurvature):
         self._data = [[d.mul(scale) for d in d_list] for d_list in self._data]
 
     def update_in_backward(self, grad_output):  # for GMM
-        # data_input = getattr(self._module, 'data_input', None)  # n x f_in
-        # assert data_input is not None
-        #
-        # n = data_input.shape[0]
-        #
-        # in_in = data_input.mul(data_input)  # n x f_in
-        # grad_grad = grad_output.mul(grad_output)  # n x f_out
-        #
-        # data_w_elem = torch.einsum('ki,kj->ij', grad_grad,
-        #                       in_in).div(n)  # f_out x f_in
-        #
-        # data_w = data_w_elem #[data_w_elem for c in range(self.num_gmm_components)]
-        #
-        # self._data = [data_w]
-        #
-        #
-        # if self.bias:
-        #     data_b = grad_grad.mean(dim=0) #[grad_grad.mean(dim=0) for _ in range(self.num_gmm_components)]  # f_out x 1
-        #     self._data.append(data_b)
+        data_input = getattr(self._module, 'data_input', None)  # n x f_in
+        assert data_input is not None
+
+        n = data_input.shape[0]
+
+        in_in = data_input.mul(data_input)  # n x f_in
+        grad_grad = grad_output.mul(grad_output)  # n x f_out
+
+        data_w_elem = torch.einsum('ki,kj->ij', grad_grad,
+                              in_in).div(n)  # f_out x f_in
+
+        data_w = data_w_elem #[data_w_elem for c in range(self.num_gmm_components)]
+
+        self._data = [data_w]
+
+        if self.bias:
+            data_b = grad_grad.mean(dim=0) #[grad_grad.mean(dim=0) for _ in range(self.num_gmm_components)]  # f_out x 1
+            self._data.append(data_b)
 
         # print("O" * 20)
         # print(self.data)
