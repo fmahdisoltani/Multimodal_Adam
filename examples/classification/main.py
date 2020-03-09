@@ -283,12 +283,14 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
             setattr(model, attr, param.detach().clone())
 
         # update params
-        def closure():
+        def closure(ent_loss):
             optimizer.zero_grad()
             output = model(data)
-            loss = F.cross_entropy(output, target)
-            loss.backward(create_graph=args.create_graph)
 
+            loss = F.cross_entropy(output, target) + ent_loss
+            loss.backward(create_graph=args.create_graph)
+            if torch.isnan(torch.sum(loss)):
+                print("inside closure isnan")
             return loss, output
 
         if isinstance(optimizer, SecondOrderOptimizer) and optimizer.curv_type == 'Fisher':
@@ -354,7 +356,10 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
 
     accuracy = 100. * total_correct / epoch_size
     confidence['top1'] /= epoch_size
-    confidence['top1_true'] /= total_correct
+    if total_correct == 0:
+        confidence['top1_true'] = 0
+    else:
+        confidence['top1_true'] /= total_correct
     confidence['top1_false'] /= (epoch_size - total_correct)
     confidence['true'] /= epoch_size
     confidence['false'] /= (epoch_size * (model.num_classes - 1))
