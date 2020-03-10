@@ -99,7 +99,7 @@ class VIOptimizer(SecondOrderOptimizer):
 
         for group in self.param_groups:
             group['std_scale'] = 0 if group['l2_reg'] == 0 else std_scale
-            group['mean'] = [[p.data.detach().clone() for _ in range(num_gmm_components)] for p in group['params']]
+            group['mean'] = [[torch.FloatTensor(p.shape).uniform_(-4, 4) for _ in range(num_gmm_components)] for p in group['params']]
             group['pais'] = [[torch.ones_like(p)/num_gmm_components for _ in range(num_gmm_components)]
                              for p in group['params']]
 
@@ -310,7 +310,6 @@ class VIOptimizer(SecondOrderOptimizer):
             self.update_mean(group)
             # self.update_postprocess(group, target='mean')
 
-            # TODO: update pais
             self.update_pais(group, loss)
 
             # copy mean to param
@@ -320,11 +319,11 @@ class VIOptimizer(SecondOrderOptimizer):
                 p.grad.copy_(m_list[0].grad)  # TODO: set it to a sample? or the comp with highest pai
 
         # self.adjust_kl_weighting()
-        print("O"*10)
-        print(group["mean"])
-        print(group["pais"])
-        print(group["curv"].inv)
-        print("P"*10)
+        # print("O"*10)
+        # print(group["mean"])
+        # print(group["pais"])
+        # print(group["curv"].inv)
+        # print("P"*10)
         return loss, prob
 
     def update_mean(self, group):
