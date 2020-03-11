@@ -87,6 +87,7 @@ class VIOptimizer(SecondOrderOptimizer):
                                           bias_correction=bias_correction,
                                           lars=lars, lars_type=lars_type)
 
+        self.num_gmm_components = num_gmm_components
         self.defaults['std_scale'] = std_scale
         self.defaults['num_gmm_components'] = num_gmm_components
         self.defaults['kl_weighting'] = kl_weighting
@@ -100,6 +101,8 @@ class VIOptimizer(SecondOrderOptimizer):
         for group in self.param_groups:
             group['std_scale'] = 0 if group['l2_reg'] == 0 else std_scale
             group['mean'] = [[torch.FloatTensor(p.shape).uniform_(-4, 4) for _ in range(num_gmm_components)] for p in group['params']]
+            group['cov'] = [[torch.FloatTensor(p.shape).uniform_(-4, 4) for _ in range(num_gmm_components)] for p in group['params']]
+
             group['pais'] = [[torch.ones_like(p)/num_gmm_components for _ in range(num_gmm_components)]
                              for p in group['params']]
 
@@ -235,6 +238,8 @@ class VIOptimizer(SecondOrderOptimizer):
 
         acc_loss = TensorAccumulator()
         acc_prob = TensorAccumulator()
+        acc_ent = TensorAccumulator()
+        acc_prior = TensorAccumulator
 
         self.set_random_seed()
 
@@ -250,13 +255,12 @@ class VIOptimizer(SecondOrderOptimizer):
                                       in zip(params, group['mean'], group['curv'].std, group['pais'])]  # pais or log_pais
                 ent_loss += torch.sum(torch.stack([torch.sum(g) for g in group['q_entropy']]))
 
+            acc_ent.update(ent_loss)
+
             # forward and backward
             loss, output = closure(ent_loss)
-            if torch.isnan(loss):
-                print("loss is nan")
-            if torch.isnan(torch.sum(output)):
-                print("output is nan")
             acc_loss.update(loss, scale=1/m)
+
             if output.ndim == 2:
                 prob = F.softmax(output, dim=1)
             elif output.ndim == 1:
@@ -273,13 +277,14 @@ class VIOptimizer(SecondOrderOptimizer):
                 group['acc_grads'].update(grads, scale=1/m/n)
 
                 curv = group['curv']
-                if curv is not None:
-                    group['acc_curv'].update(curv.data, scale=1/m/n)
+                # if curv is not None:
+                #     group['acc_curv'].update(curv.data, scale=1/m/n)
 
                 delta = self.calculate_deltas(group['mean'], curv.std, group['pais'], params)
                 group['acc_delta'].update(delta)
 
         loss, prob = acc_loss.get(), acc_prob.get()
+        delta = group['acc_delta'].get()
 
         # update acc step
         self.optim_state['acc_step'] += 1
@@ -325,6 +330,32 @@ class VIOptimizer(SecondOrderOptimizer):
         # print(group["curv"].inv)
         # print("P"*10)
         return loss, prob
+
+    def update_prec(self, group):
+        ema = self.ema
+        beta = self.ema_decay
+        delta = group['acc_delta']
+
+        if prec is None or beta == 1:
+            self.ema = [[d.clone() for _ in range(self.num_gmm_components)] for
+                        d in self.data]
+        else:
+            prior_hess = self._l2_reg
+            h_hess = self.data  # + prior_hess
+
+            # for e_list,hh in zip(ema, h_hess):
+            #     for e in e_list:
+            #         (hh * beta).add(e)
+
+            self.ema = [[(hh * beta * d).add(e) for e, d in zip(e_list, d_list)]
+                        for e_list, hh, d_list in
+                        zip(ema, h_hess, delta._accumulation)]  # update rule
+            # self._l2_reg = self._l2_reg * beta * delta #TODO:Farzaneh: Fix
+
+        if self.use_max_ema:
+            for e_list, e_max_list in zip(self.ema, self.ema_max):
+                for e, e_max in zip(e_list, e_max_list):
+                    torch.max(e, e_max, out=e_max)
 
     def update_mean(self, group):
 
