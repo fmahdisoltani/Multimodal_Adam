@@ -149,10 +149,10 @@ class Curvature(object):
         setattr(module, 'grad_input', grad_input)
         setattr(module, 'grad_output', grad_output)
 
-        self.update_in_backward(grad_output)
+        self.update_in_backward(grad_output)  # hessian of nn stored in curv.data
 
         # adjust grad scale along with 'reduction' in loss function
-        batch_size = grad_output.shape[0]
+        # batch_size = grad_output.shape[0]
         # self.adjust_data_scale(batch_size**2)
 
     def adjust_data_scale(self, scale):
