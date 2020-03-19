@@ -360,7 +360,10 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
         confidence['top1_true'] = 0
     else:
         confidence['top1_true'] /= total_correct
-    confidence['top1_false'] /= (epoch_size - total_correct)
+    if epoch_size == total_correct:
+        confidence['top1_false'] = 0
+    else:
+        confidence['top1_false'] /= (epoch_size - total_correct)
     confidence['true'] /= epoch_size
     confidence['false'] /= (epoch_size * (model.num_classes - 1))
 
