@@ -87,6 +87,7 @@ class VIOptimizer(SecondOrderOptimizer):
                                           bias_correction=bias_correction,
                                           lars=lars, lars_type=lars_type)
 
+        self.num_gmm_components = num_gmm_components
         self.defaults['std_scale'] = std_scale
         self.defaults['num_gmm_components'] = num_gmm_components
         self.defaults['kl_weighting'] = kl_weighting
@@ -100,6 +101,10 @@ class VIOptimizer(SecondOrderOptimizer):
         for group in self.param_groups:
             group['std_scale'] = 0 if group['l2_reg'] == 0 else std_scale
             group['mean'] = [[torch.FloatTensor(p.shape).uniform_(-4, 4) for _ in range(num_gmm_components)] for p in group['params']]
+            group['prec'] = [[torch.ones_like(p) * init_precision for _ in
+                              range(num_gmm_components)] for p in
+                             group['params']]
+            self.update_cov(group)
             group['pais'] = [[torch.ones_like(p)/num_gmm_components for _ in range(num_gmm_components)]
                              for p in group['params']]
 
@@ -110,10 +115,7 @@ class VIOptimizer(SecondOrderOptimizer):
 
             if init_precision is not None:
                 curv = group['curv']
-                curv.set_num_gmm(num_gmm_components)
                 curv.element_wise_init(init_precision)
-                curv.delta = group['acc_delta']
-                curv.step(update_std=(group['std_scale'] > 0))
 
     def init_buffer(self, params):
         for p_list in params:
@@ -134,18 +136,17 @@ class VIOptimizer(SecondOrderOptimizer):
 
         super(VIOptimizer, self).zero_grad()
 
-    def calculate_deltas(self, means, stds, pais, params):
+    def calculate_deltas(self, means, covs, pais, params):
         num_gmm_components = len(means[0])
         deltas = []
-        for p, mean_list, std_list, pai_list in zip(params, means, stds, pais):
+        for p, mean_list, cov_list, pai_list in zip(params, means, covs, pais):
             p_value = p.data.detach()
-            down = gmm(p_value, mean_list, std_list, pai_list)
-            value = [gaussian(p_value, mean_list[i], std_list[i])/down for i in range(num_gmm_components)]
+            down = gmm(p_value, mean_list, cov_list, pai_list)
+            value = [gaussian(p_value, mean_list[i], cov_list[i])/down for i in range(num_gmm_components)]
             if torch.isnan(torch.sum(torch.stack(value))):
                 print("inside calculate_deltas")
             deltas.append(value)
 
-        # TODO: check if it is the correct thing to pass std
         return deltas
 
     @property
@@ -163,13 +164,28 @@ class VIOptimizer(SecondOrderOptimizer):
 
         for group in self.param_groups:
             params, mean = group['params'], group['mean']
-            curv = group['curv']
-            if curv is not None and curv.std is not None:
-                # sample from posterior
-                curv.sample_params(params, mean, group['std_scale'], group['pais'])
-            else:
-                for p, m in zip(params, mean):
-                    p.data.copy_(m.data)
+            cov = group['cov']
+            pais = group['pais']
+            std_scale = 1
+
+            for p, m, cv, pai in zip(params, mean, cov,
+                                      pais):  # sample from GMM for each param
+                # torch.stack([pp.view(-1) for pp in pai])
+                stacked_pais = torch.stack(pai).view(self.num_gmm_components, -1)
+                selected_comp = torch.multinomial(stacked_pais.T, 1)  # 6 numbers
+                stacked_means = torch.stack(m).view(self.num_gmm_components,
+                                                    -1)  # ([mm.view(-1) for mm in m])
+                stacked_cv = torch.stack(cv).view(self.num_gmm_components,
+                                                    -1)  # torch.stack([ss.view(-1) for ss in std])
+                noise = torch.randn_like(p)
+                smean = torch.stack([stacked_means[selected_comp[i], i] for i in
+                                     range(len(selected_comp))])
+                scv = torch.stack([stacked_cv[selected_comp[i], i] for i in
+                                    range(len(selected_comp))])
+                std = torch.sqrt(scv)
+                gg = torch.addcmul(smean.reshape_as(noise), std_scale, noise,
+                                   std.reshape_as(noise))
+                p.data.copy_(gg)
 
     def copy_mean_to_params(self):
         for group in self.param_groups:
@@ -180,36 +196,34 @@ class VIOptimizer(SecondOrderOptimizer):
                         and getattr(m, 'grad', None) is not None:
                     p.grad.copy_(m.grad)
 
-    def adjust_kl_weighting(self):
-        warmup_steps = self.defaults['warmup_kl_weighting_steps']
-        if warmup_steps is None:
-            return
+    # def adjust_kl_weighting(self):
+    #     warmup_steps = self.defaults['warmup_kl_weighting_steps']
+    #     if warmup_steps is None:
+    #         return
+    #
+    #     current_step = self.optim_state['step']
+    #     if warmup_steps < current_step:
+    #         return
+    #
+    #     target_kl = self.defaults['kl_weighting']
+    #     init_kl = self.defaults['warmup_kl_weighting_init']
+    #
+    #     rate = current_step / warmup_steps
+    #     kl_weighting = init_kl + rate * (target_kl - init_kl)
+    #
+    #     rate = kl_weighting / init_kl
+    #     l2_reg = rate * self.defaults['l2_reg']
+    #     std_scale = math.sqrt(rate) * self.defaults['std_scale']
+    #     for group in self.param_groups:
+    #         if group['l2_reg'] > 0:
+    #             group['l2_reg'] = l2_reg
+    #         if group['std_scale'] > 0:
+    #             group['std_scale'] = std_scale
 
-        current_step = self.optim_state['step']
-        if warmup_steps < current_step:
-            return
-
-        target_kl = self.defaults['kl_weighting']
-        init_kl = self.defaults['warmup_kl_weighting_init']
-
-        rate = current_step / warmup_steps
-        kl_weighting = init_kl + rate * (target_kl - init_kl)
-
-        rate = kl_weighting / init_kl
-        l2_reg = rate * self.defaults['l2_reg']
-        std_scale = math.sqrt(rate) * self.defaults['std_scale']
+    def backward_postprocess(self):  # acc_grad => group[target].grad
         for group in self.param_groups:
-            if group['l2_reg'] > 0:
-                group['l2_reg'] = l2_reg
-            if group['std_scale'] > 0:
-                group['std_scale'] = std_scale
-
-    def backward_postprocess(self, target='params'):  # acc_grad => group[target].grad
-        for group in self.param_groups:
-            tt = group[target]
-
             acc_grads = group['acc_grads'].get()
-            for p_list, acc_grad in zip(tt, acc_grads):
+            for p_list, acc_grad in zip(group['mean'], acc_grads):
                 for p in p_list:
                     if acc_grad is not None:
                         p.grad = acc_grad.clone()
@@ -239,19 +253,21 @@ class VIOptimizer(SecondOrderOptimizer):
         self.set_random_seed()
 
         for _ in range(m):
-
             # sampling
             self.sample_params()
             # forward and backward
             ent_loss = 0
             for group in self.param_groups:
                 params = group['params']
-                group['q_entropy'] = [log_gmm(p.data, m_list, s_list, pai_list) for p, m_list, s_list, pai_list
-                                      in zip(params, group['mean'], group['curv'].std, group['pais'])]  # pais or log_pais
+                group['q_entropy'] = [log_gmm(p, m_list, s_list, pai_list) for p, m_list, s_list, pai_list
+                                      in zip(params, group['mean'], group['cov'], group['pais'])]  # pais or log_pais
                 ent_loss += torch.sum(torch.stack([torch.sum(g) for g in group['q_entropy']]))
 
             # forward and backward
             loss, output = closure(ent_loss)
+            for p in params:
+                p.grad.add_(group['l2_reg'], p.data)  # Add derivative of prior
+
             if torch.isnan(loss):
                 print("loss is nan")
             if torch.isnan(torch.sum(output)):
@@ -272,11 +288,10 @@ class VIOptimizer(SecondOrderOptimizer):
                 grads = [p.grad.data for p in params]
                 group['acc_grads'].update(grads, scale=1/m/n)
 
-                curv = group['curv']
-                if curv is not None:
-                    group['acc_curv'].update(curv.data, scale=1/m/n)
+                group['acc_curv'].update(group['curv'].data, scale=1/m/n)
 
-                delta = self.calculate_deltas(group['mean'], curv.std, group['pais'], params)
+                delta = self.calculate_deltas(group['mean'], group['cov'], group['pais'], params)
+
                 group['acc_delta'].update(delta)
 
         loss, prob = acc_loss.get(), acc_prob.get()
@@ -288,52 +303,60 @@ class VIOptimizer(SecondOrderOptimizer):
         else:
             self.optim_state['acc_step'] = 0
 
-        self.backward_postprocess(target='mean')
+        self.backward_postprocess()
         self.optim_state['step'] += 1
 
         # update distribution
         for group in self.local_param_groups:
 
-            self.update_preprocess(group, target='mean', grad_type='raw')
-
             # update covariance
-            mean, curv = group['mean'], group['curv']
-            if curv is not None:
-                curv.update_ema()
-                curv.update_std()
-                curv.update_inv()
-                # curv.step(update_std=(group['std_scale'] > 0))
-                # curv.precondition_grad(mean)
+            self.update_prec(group)
+            self.update_cov(group)
 
             # update mean
-            # self.update_preprocess(group, target='mean', grad_type='preconditioned')
             self.update_mean(group)
-            # self.update_postprocess(group, target='mean')
 
             self.update_pais(group, loss)
 
             # copy mean to param
             params = group['params']
-            for p, m_list in zip(params, mean):
+            for p, m_list in zip(params,  group['mean']):
                 p.data.copy_(m_list[0].data)
                 p.grad.copy_(m_list[0].grad)  # TODO: set it to a sample? or the comp with highest pai
 
-        # self.adjust_kl_weighting()
-        # print("O"*10)
-        # print(group["mean"])
-        # print(group["pais"])
-        # print(group["curv"].inv)
-        # print("P"*10)
+            # self.adjust_kl_weighting()
+            print("O"*10)
+            print(group["mean"])
+            print(group["pais"])
+            print(group["cov"])
+            print("P"*10)
+
         return loss, prob
 
-    def update_mean(self, group):
+    def update_prec(self, group):
+        prec = group['prec']
+        beta = self.defaults['lr']
+        delta = group['acc_delta']
 
+        if prec is None or beta == 1:
+            group['prec'] = [[d.clone() for _ in range(self.num_gmm_components)] for d in self.data]
+        else:
+            # prior_hess = self._l2_reg
+            h_hess = group['curv'].data  # + prior_hess
+
+            group['prec'] = [[(hh*beta*d).add(p) for p, d in zip(p_list, d_list)]
+                        for p_list, hh, d_list in zip(prec, h_hess, delta._accumulation)]  # update rule
+
+    def update_cov(self, group):
+        group['cov'] = [[1 / e for e in prec_list] for prec_list in
+                        group['prec']]
+
+    def update_mean(self, group):
         means = group['mean']
-        params = group['params']
         deltas = group['acc_delta']._accumulation
-        invs = group['curv'].inv
-        for m_list, d_list, inv_list in zip(means, deltas, invs):
-            for m, d, inv in zip(m_list, d_list, inv_list):
+        cov = group['cov']
+        for m_list, d_list, cov_list in zip(means, deltas, cov):
+            for m, d, inv in zip(m_list, d_list, cov_list):
                 grad = m.grad
                 if grad is None:
                     continue
@@ -341,124 +364,23 @@ class VIOptimizer(SecondOrderOptimizer):
 
     def update_pais(self, group, output):
         num_components = self.defaults['num_gmm_components']
-        params = group['params']
         deltas = group['acc_delta']._accumulation
-        pais = group['pais']
-        rhos = [[torch.log(p)-torch.log(p_list[-1]) for p in p_list] for p_list in pais]
+        pais1 = group['pais']
+        rhos1 = [[torch.log(p)-torch.log(p_list[-1]) for p in p_list] for p_list in pais1]
         beta = 0.001#self.defaults['lr']
         delta_K = [d_list[-1] for d_list in deltas] #last component for all param
 
         delta_diff = []
-        # for d_list in deltas:
-        #     for d, dk in zip(d_list, delta_K):
-        #         delta_diff.append(torch.stack([di - dki for di, dki in zip(d, dk)]))
-        # rho[c] = (1) * rho[c] - beta * (all_deltas[c] - all_deltas[-1]) * objective(sampled_z)
 
         for d_list, dk in zip(deltas, delta_K):
             delta_diff.append([d - dk for d in d_list])
 
-        rhos = [[(r - d)*output*beta for r, d in zip(r_list, d_list)] for r_list, d_list in zip(rhos, delta_diff)]
+        rhos = [[(r - d)*output*beta for r, d in zip(r_list, d_list)] for r_list, d_list in zip(rhos1, delta_diff)]
         pais = [torch.softmax(torch.stack(r_list), dim=0) for r_list in rhos]
         if torch.isnan(torch.sum(torch.stack(pais))):
             print("booya")
 
         group['pais'] = [[pai_list[i].data.detach() for i in range(num_components)] for pai_list in pais]
-
-    def update(self, group, target='params'):
-        params = group[target]
-        for p in params:
-            grad = p.grad
-            if grad is None:
-                continue
-            p.data.add_(-group['lr'], grad)
-
-    def update_preprocess(self, group, target='params', grad_type='raw'):
-        assert grad_type in ['raw', 'preconditioned'], 'Invalid grad type: {}.'.format(grad_type)
-        params = group[target]
-        state = self.state
-
-        def apply_gmm_ratio(p, grad):  # delta term
-            grad.mul_(group['acc_delta'])
-
-        def apply_gmm_entropy(p, grad):
-            grad.add_(group['gmm_entropy'])
-
-        def apply_l2_reg(p, grad):
-            if group['l2_reg'] != 0:
-                if grad.is_sparse:
-                    raise RuntimeError(
-                        "l2 regularization option is not compatible with sparse gradients")
-                grad.add_(group['l2_reg'], p.data)  # group['l2_reg'] is the regularization rate
-                curv = group['curv']
-                if curv is not None:
-                    curv.l2_reg = group['l2_reg']  # TODO: wtf seriously
-
-        def apply_weight_decay(p, grad):
-            if group['weight_decay'] != 0:
-                if hasattr(grad, 'is_sparse') and grad.is_sparse:
-                    raise RuntimeError(
-                        "weight_decay option is not compatible with sparse gradients")
-                grad.add_(group['weight_decay'], p.data)
-
-        def apply_momentum(p, grad):
-            momentum = group['momentum']
-
-            if momentum != 0:
-                buf = state[p]['momentum_buffer']
-                buf.mul_(momentum).add_(grad)
-                grad.copy_(buf)
-
-        def apply_grad_ema_decay(p, grad):
-            grad_ema_decay = group['grad_ema_decay']
-            if grad_ema_decay != 1:
-                buf = state[p]['grad_ema_buffer']
-                buf.mul_(1 - grad_ema_decay).add_(grad.mul(grad_ema_decay))
-                grad.copy_(buf)
-
-        def apply_bias_correction(grad):
-            curv = group['curv']
-            beta1 = 1 - group['grad_ema_decay']
-            beta2 = 1 - curv.ema_decay
-
-            bias_correction1 = 1 - beta1 ** self.optim_state['step']
-            bias_correction2 = 1 - beta2 ** self.optim_state['step']
-            if getattr(curv, 'use_sqrt_ema', False):
-                bias_correction2 = math.sqrt(bias_correction2)
-
-            grad.mul_(bias_correction2 / bias_correction1)
-
-        def apply_lars(p, grad, thr=1e-2, eps=1e-9):
-            d_norm = p.data.norm()
-            if d_norm > thr:
-                g_norm = grad.norm()
-                rate = d_norm / (g_norm + eps)
-                grad.mul_(rate)
-
-        for p_list in params:
-            for p in p_list:
-
-                grad = p.grad
-
-                if grad is None:
-                    continue
-
-                if grad_type == 'raw':
-                    apply_l2_reg(p, grad)
-
-                if grad_type == 'preconditioned':
-                    apply_weight_decay(p, grad)
-
-                if group['momentum_type'] == grad_type:
-                    apply_momentum(p, grad)
-
-                if group['grad_ema_type'] == grad_type:
-                    apply_grad_ema_decay(p, grad)
-
-                if grad_type == 'preconditioned' and group['bias_correction']:
-                    apply_bias_correction(grad)
-
-                if group['lars_type'] == grad_type and group['lars']:
-                    apply_lars(p, grad)
 
     def prediction(self, data, mc=None, keep_probs=False):
 
@@ -554,17 +476,17 @@ class DistributedVIOptimizer(DistributedSecondOrderOptimizer, VIOptimizer):
         return ret
 
 
-def gaussian(x, mean, std):
-    return (1 / torch.sqrt(torch.FloatTensor([2*math.pi])*std**2)) * torch.exp(-((x - mean) ** 2.) / (2 * std**2))
+def gaussian(x, mean, cov):
+    return (1 / torch.sqrt(torch.FloatTensor([2*math.pi])*cov)) * torch.exp(-((x - mean) ** 2.) / (2 * cov))
 
-def gmm(x, means, stds, pais):
-    return sum([pai * gaussian(x, mu, std) for (pai, mu, std) in zip(pais, means, stds)])
+def gmm(x, means, covs, pais):
+    return sum([pai * gaussian(x, mu, cov) for (pai, mu, cov) in zip(pais, means, covs)])
 
-def log_gaussian(x, mean, std):
-    return -0.5 * torch.log(2 * 3.14 * std ** 2) - (0.5 * (1 / (std ** 2)) * (x - mean) ** 2)
+def log_gaussian(x, mean, cov):
+    return -0.5 * torch.log(2 * 3.14 * cov) - (0.5 * (1 / (cov)) * (x - mean) ** 2)
 
-def log_gmm(x, means, stds, log_pais):
-    component_log_densities = torch.stack([log_gaussian(x, mu, std) for (mu, std) in zip(means, stds)]).T
+def log_gmm(x, means, covs, log_pais):
+    component_log_densities = torch.stack([log_gaussian(x, mu, cov) for (mu, cov) in zip(means, covs)]).T
     # log_weights = torch.log(pais)
     log_weights = log_normalize(torch.stack(log_pais))
     return torch.logsumexp(component_log_densities + log_weights, axis=-1, keepdims=False)
