@@ -28,16 +28,12 @@ class MLP(nn.Module):
     def __init__(self, num_classes=10):
         super().__init__()
         n_hid = 1
-        n_out = 1
+        n_out = 2
         self.l1 = nn.Linear(1, n_hid, bias=False)
         self.l2 = nn.Linear(n_hid, n_out, bias=False)
-        # s1 = torch.nn.Parameter(gmm_sample(torch.tensor([-2., 2.]), torch.tensor([.8, .8]),
-        #                             torch.log(torch.tensor([.5, .5])),1))
-        # s2 = torch.nn.Parameter(gmm_sample(torch.tensor([-1., 1.]), torch.tensor([1.8, 1.4]),
-        #                             torch.log(torch.tensor([.6, .4])), num_samples=1))
 
-        s1 = torch.nn.Parameter(torch.tensor([[2.]]), requires_grad=False)
-        s2 = torch.nn.Parameter(torch.tensor([[1.]]), requires_grad=False)
+        s1 = torch.nn.Parameter(torch.tensor([[2.]]))
+        s2 = torch.nn.Parameter(torch.tensor([[-1., -2.]]).T)
 
         print("D" * 20)
         print(s1)
@@ -47,7 +43,7 @@ class MLP(nn.Module):
         self.l2.weight = s2
 
     def forward(self, x: torch.Tensor):
-        x1 = F.relu(self.l1(x))
+        x1 = self.l1(x)
         print(self.l1(x))
         x2 = self.l2(x1)
         return x2
@@ -61,8 +57,9 @@ def mlp(**kwargs):
 class TinyDataset(Dataset):
     def __init__(self):
         self.mlp = MLP()
-        self.samples = self.mlp(torch.FloatTensor(1000, 1).uniform_(-1, 1))
-        self.labels = torch.tensor([int(s > 0) for s in self.samples])
+        self.samples = torch.FloatTensor(1000, 1).uniform_(-1, 1)
+        mlp_output = self.mlp(self.samples)
+        self.labels = torch.tensor([int(s[1] > s[0]) for s in mlp_output])
 
     def __len__(self):
         return len(self.samples)
