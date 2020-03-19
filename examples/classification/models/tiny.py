@@ -21,7 +21,7 @@ class TINY(nn.Module):
         self.l2.weight = s2
 
     def forward(self, x: torch.Tensor):
-        x1 = F.relu(self.l1(x))
+        x1 = self.l1(x)
         x2 = self.l2(x1)
         return x2
 
