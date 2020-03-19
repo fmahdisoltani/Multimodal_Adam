@@ -129,83 +129,83 @@ class DiagGMMLinear(DiagCurvature):
     def element_wise_init(self, value):  # updated
         self._data = [torch.ones(s, device=self.device).mul(value) for s in self.shape]
 
-    def set_num_gmm(self, num_gmm_components):
-        self.num_gmm_components = num_gmm_components
+    # def set_num_gmm(self, num_gmm_components):
+    #     self.num_gmm_components = num_gmm_components
 
-    def sample_params(self, params, mean, std_scale, gmm_pais):
-        all_selected_comps = []
-        for p, m, std, pai in zip(params, mean, self.std, gmm_pais):  # sample from GMM for each param
-            selected_comp = torch.multinomial(torch.tensor(pai), 1)
-            noise = torch.randn_like(m[selected_comp])
-            p.data.copy_(torch.addcmul(m[selected_comp], std_scale, noise, std[selected_comp]))
-            all_selected_comps.append(selected_comp)
-        return all_selected_comps
+    # def sample_params(self, params, mean, std_scale, gmm_pais):
+    #     all_selected_comps = []
+    #     for p, m, std, pai in zip(params, mean, self.std, gmm_pais):  # sample from GMM for each param
+    #         selected_comp = torch.multinomial(torch.tensor(pai), 1)
+    #         noise = torch.randn_like(m[selected_comp])
+    #         p.data.copy_(torch.addcmul(m[selected_comp], std_scale, noise, std[selected_comp]))
+    #         all_selected_comps.append(selected_comp)
+    #     return all_selected_comps
 
-    def sample_params(self, params, mean, std_scale, gmm_pais):
-        all_selected_comps = []
-        self.num_gmm_components
-        for p, m, std, pai in zip(params, mean, self.std, gmm_pais):  # sample from GMM for each param
-            # torch.stack([pp.view(-1) for pp in pai])
-            stacked_pais = torch.stack(pai).view(self.num_gmm_components, -1)  #torch.stack([pp.view(-1) for pp in pai])
-            selected_comp = torch.multinomial(stacked_pais.T, 1)  # 6 numbers
-            stacked_means = torch.stack(m).view(self.num_gmm_components, -1)  # ([mm.view(-1) for mm in m])
-            stacked_std = torch.stack(std).view(self.num_gmm_components, -1)  # torch.stack([ss.view(-1) for ss in std])
-            noise = torch.randn_like(p)
-            smean = torch.stack([stacked_means[selected_comp[i], i] for i in range(len(selected_comp))])
-            sstd =torch.stack([stacked_std[selected_comp[i], i] for i in range(len(selected_comp))])
+    # def sample_params(self, params, mean, std_scale, gmm_pais):
+    #     all_selected_comps = []
+    #     self.num_gmm_components
+    #     for p, m, std, pai in zip(params, mean, self.std, gmm_pais):  # sample from GMM for each param
+    #         # torch.stack([pp.view(-1) for pp in pai])
+    #         stacked_pais = torch.stack(pai).view(self.num_gmm_components, -1)  #torch.stack([pp.view(-1) for pp in pai])
+    #         selected_comp = torch.multinomial(stacked_pais.T, 1)  # 6 numbers
+    #         stacked_means = torch.stack(m).view(self.num_gmm_components, -1)  # ([mm.view(-1) for mm in m])
+    #         stacked_std = torch.stack(std).view(self.num_gmm_components, -1)  # torch.stack([ss.view(-1) for ss in std])
+    #         noise = torch.randn_like(p)
+    #         smean = torch.stack([stacked_means[selected_comp[i], i] for i in range(len(selected_comp))])
+    #         sstd =torch.stack([stacked_std[selected_comp[i], i] for i in range(len(selected_comp))])
+    #
+    #         gg = torch.addcmul(smean.reshape_as(noise), std_scale, noise, sstd.reshape_as(noise))
+    #         p.data.copy_(gg)
+    #     return
 
-            gg = torch.addcmul(smean.reshape_as(noise), std_scale, noise, sstd.reshape_as(noise))
-            p.data.copy_(gg)
-        return
 
+    # def precondition_grad(self, params):
+    #     for p_list, inv_list in zip(params, self.inv):
+    #         for p, inv in zip(p_list, inv_list):  # TODO: using one inv for everyone
+    #             if p.grad is not None:
+    #                 preconditioned_grad = inv.mul(p.grad)
+    #                 p.grad.copy_(preconditioned_grad)
 
-    def precondition_grad(self, params):
-        for p_list, inv_list in zip(params, self.inv):
-            for p, inv in zip(p_list, inv_list):  # TODO: using one inv for everyone
-                if p.grad is not None:
-                    preconditioned_grad = inv.mul(p.grad)
-                    p.grad.copy_(preconditioned_grad)
+    # def update_inv(self): #updated
+    #     ema = self.ema if not self.use_max_ema else self.ema_max
+    #     self.inv = [[self._inv(e) for e in ema_list] for ema_list in ema]
 
-    def update_inv(self): #updated
-        ema = self.ema if not self.use_max_ema else self.ema_max
-        self.inv = [[self._inv(e) for e in ema_list] for ema_list in ema]
+    # def update_std(self): #updated
+    #     self.std = [[inv.sqrt() for inv in inv_list] for inv_list in self.inv]
 
-    def update_std(self): #updated
-        self.std = [[inv.sqrt() for inv in inv_list] for inv_list in self.inv]
-
-    def update_ema(self): #updated
-        ema = self.ema
-        beta = self.ema_decay
-        delta = self.delta
-
-        if ema is None or beta == 1:
-            self.ema = [[d.clone() for _ in range(self.num_gmm_components)] for d in self.data]
-        else:
-            prior_hess = self._l2_reg
-            h_hess = self.data  # + prior_hess
-
-            # for e_list,hh in zip(ema, h_hess):
-            #     for e in e_list:
-            #         (hh * beta).add(e)
-
-            self.ema = [[(hh*beta*d).add(e) for e, d in zip(e_list, d_list)]
-                        for e_list, hh, d_list in zip(ema, h_hess, delta._accumulation)]  # update rule
-            # self._l2_reg = self._l2_reg * beta * delta #TODO:Farzaneh: Fix
-
-        # if ema is None or beta == 1:
-        #     self.ema = [[d.clone() for d in d_list] for d_list in data]
-        #     if self.use_max_ema and ema_max is None:
-        #         self.ema_max = [[e.clone() for e in e_list]for e_list in self.ema]
-        #     self._l2_reg_ema = self._l2_reg
-        # else:
-        #     self.ema = [[d.mul(beta).add(1 - beta, e) for d, e in zip(d_list, e_list)]
-        #                 for d_list, e_list in zip(data, ema)]  # HERE change update rule
-        #     self._l2_reg_ema = self._l2_reg * beta + self._l2_reg_ema * (1 - beta)
-
-        if self.use_max_ema:
-            for e_list, e_max_list in zip(self.ema, self.ema_max):
-                for e, e_max in zip(e_list, e_max_list):
-                    torch.max(e, e_max, out=e_max)
+    # def update_ema(self): #updated
+    #     ema = self.ema
+    #     beta = self.ema_decay
+    #     # delta = self.delta
+    #
+    #     if ema is None or beta == 1:
+    #         self.ema = [[d.clone() for _ in range(self.num_gmm_components)] for d in self.data]
+    #     else:
+    #         prior_hess = self._l2_reg
+    #         h_hess = self.data  # + prior_hess
+    #
+    #         # for e_list,hh in zip(ema, h_hess):
+    #         #     for e in e_list:
+    #         #         (hh * beta).add(e)
+    #
+    #         self.ema = [[(hh*beta*d).add(e) for e, d in zip(e_list, d_list)]
+    #                     for e_list, hh, d_list in zip(ema, h_hess, delta._accumulation)]  # update rule
+    #         # self._l2_reg = self._l2_reg * beta * delta #TODO:Farzaneh: Fix
+    #
+    #     # if ema is None or beta == 1:
+    #     #     self.ema = [[d.clone() for d in d_list] for d_list in data]
+    #     #     if self.use_max_ema and ema_max is None:
+    #     #         self.ema_max = [[e.clone() for e in e_list]for e_list in self.ema]
+    #     #     self._l2_reg_ema = self._l2_reg
+    #     # else:
+    #     #     self.ema = [[d.mul(beta).add(1 - beta, e) for d, e in zip(d_list, e_list)]
+    #     #                 for d_list, e_list in zip(data, ema)]  # HERE change update rule
+    #     #     self._l2_reg_ema = self._l2_reg * beta + self._l2_reg_ema * (1 - beta)
+    #
+    #     if self.use_max_ema:
+    #         for e_list, e_max_list in zip(self.ema, self.ema_max):
+    #             for e, e_max in zip(e_list, e_max_list):
+    #                 torch.max(e, e_max, out=e_max)
 
     def adjust_data_scale(self, scale):
         self._data = [[d.mul(scale) for d in d_list] for d_list in self._data]
