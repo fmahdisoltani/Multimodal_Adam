@@ -334,22 +334,21 @@ class VIOptimizer(SecondOrderOptimizer):
         return loss, prob
 
     def update_prec(self, group):
-        prec = group['prec']
+        # prec = group['prec']
         beta = self.defaults['lr']
         delta = group['acc_delta']
 
-        if prec is None or beta == 1:
+        if group['prec'] is None or beta == 1:
             group['prec'] = [[d.clone() for _ in range(self.num_gmm_components)] for d in self.data]
         else:
             # prior_hess = self._l2_reg
             h_hess = group['curv'].data  # + prior_hess
 
             group['prec'] = [[(hh*beta*d).add(p) for p, d in zip(p_list, d_list)]
-                        for p_list, hh, d_list in zip(prec, h_hess, delta._accumulation)]  # update rule
+                        for p_list, hh, d_list in zip(group['prec'] , h_hess, delta._accumulation)]  # update rule
 
     def update_cov(self, group):
-        group['cov'] = [[1 / e for e in prec_list] for prec_list in
-                        group['prec']]
+        group['cov'] = [[1 / e for e in prec_list] for prec_list in group['prec']]
 
     def update_mean(self, group):
         means = group['mean']
@@ -358,9 +357,7 @@ class VIOptimizer(SecondOrderOptimizer):
         for m_list, d_list, cov_list in zip(means, deltas, cov):
             for m, d, inv in zip(m_list, d_list, cov_list):
                 grad = m.grad
-                if grad is None:
-                    continue
-                m.data.add_(-group['lr'], d * grad*inv)  #HERE: * group['ratio']
+                m.data.add_(-group['lr'], d * grad * inv)  #HERE: * group['ratio']
 
     def update_pais(self, group, output):
         num_components = self.defaults['num_gmm_components']
