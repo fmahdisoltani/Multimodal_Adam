@@ -286,7 +286,8 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
         def closure(ent_loss):
             optimizer.zero_grad()
             output = model(data)
-
+            # criterion = torch.nn.MSELoss()
+            # loss = criterion(output, target) + ent_loss
             loss = F.cross_entropy(output, target) + ent_loss
             loss.backward(create_graph=args.create_graph)
             if torch.isnan(torch.sum(loss)):
