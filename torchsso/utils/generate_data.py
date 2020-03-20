@@ -4,6 +4,8 @@ import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import Dataset
 
+from examples.classification.models.tiny import TINY
+
 
 def log_normalize(x):
     return x - torch.logsumexp(x, 0)
@@ -24,41 +26,17 @@ def gmm_sample(means, stds, log_pais, num_samples): #TODO: change std's to log_s
     return torch.stack([samples[i, ix, :] for i, ix in enumerate(ixs)])
 
 
-class MLP(nn.Module):
-    def __init__(self, num_classes=10):
-        super().__init__()
-        n_hid = 1
-        n_out = 2
-        self.l1 = nn.Linear(1, n_hid, bias=False)
-        self.l2 = nn.Linear(n_hid, n_out, bias=False)
-
-        s1 = torch.nn.Parameter(torch.tensor([[2.]]))
-        s2 = torch.nn.Parameter(torch.tensor([[-1., -2.]]).T)
-
-        print("D" * 20)
-        print(s1)
-        print(s2)
-        print("D"*20)
-        self.l1.weight = s1
-        self.l2.weight = s2
-
-    def forward(self, x: torch.Tensor):
-        x1 = self.l1(x)
-        print(self.l1(x))
-        x2 = self.l2(x1)
-        return x2
-
-
 def mlp(**kwargs):
-    model = MLP(**kwargs)
+    model = TINY(**kwargs)
     return model
 
 
 class TinyDataset(Dataset):
     def __init__(self):
-        self.mlp = MLP()
+        self.mlp = TINY()
         self.samples = torch.FloatTensor(1000, 1).uniform_(-1, 1)
         mlp_output = self.mlp(self.samples)
+        # self.labels = torch.tensor([s for s in mlp_output])
         self.labels = torch.tensor([int(s[1] > s[0]) for s in mlp_output])
 
     def __len__(self):
