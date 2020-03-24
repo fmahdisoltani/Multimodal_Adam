@@ -70,9 +70,9 @@ class MixtureAccumulator(object):
             for d_ind in range(len(data)):
                 for comp in range(self.num_gmm_components):
                     if self._accumulation[d_ind][comp] is None:
-                        self._accumulation[d_ind][comp] = data[d_ind][comp].clone()
+                        self._accumulation[d_ind][comp] = data[d_ind][comp].clone().mul(scale)
                     else:
-                        self._accumulation[d_ind][comp].add_(data[d_ind][comp])
+                        self._accumulation[d_ind][comp].add_(data[d_ind][comp].mul(scale))
 
         else:
             if self._accumulation is None:
