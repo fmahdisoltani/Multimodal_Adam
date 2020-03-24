@@ -100,6 +100,7 @@ class VIOptimizer(SecondOrderOptimizer):
 
         for group in self.param_groups:
             group['std_scale'] = 0 if group['l2_reg'] == 0 else std_scale
+            # group['mean'] = [[torch.ones_like(p) for _ in range(num_gmm_components)] for p in group['params']]
             group['mean'] = [[torch.FloatTensor(p.shape).uniform_(-4, 4) for _ in range(num_gmm_components)] for p in group['params']]
             group['prec'] = [[torch.ones_like(p) * init_precision for _ in
                               range(num_gmm_components)] for p in
@@ -163,29 +164,30 @@ class VIOptimizer(SecondOrderOptimizer):
     def sample_params(self):
 
         for group in self.param_groups:
-            params, mean = group['params'], group['mean']
+            params, mean_list = group['params'], group['mean']
             cov = group['cov']
             pais = group['pais']
             std_scale = 1
 
-            for p, m, cv, pai in zip(params, mean, cov,
-                                      pais):  # sample from GMM for each param
+            for p, m, cv, pai in zip(params, mean_list, cov, pais):  # sample from GMM for each param
                 # torch.stack([pp.view(-1) for pp in pai])
                 stacked_pais = torch.stack(pai).view(self.num_gmm_components, -1)
-                selected_comp = torch.multinomial(stacked_pais.T, 1)  # 6 numbers
-                stacked_means = torch.stack(m).view(self.num_gmm_components,
-                                                    -1)  # ([mm.view(-1) for mm in m])
-                stacked_cv = torch.stack(cv).view(self.num_gmm_components,
-                                                    -1)  # torch.stack([ss.view(-1) for ss in std])
-                noise = torch.randn_like(p)
+                selected_comp = torch.multinomial(stacked_pais.T, 1)
+                stacked_means = torch.stack(m).view(self.num_gmm_components, -1)  # ([mm.view(-1) for mm in m])
+                stacked_cv = torch.stack(cv).view(self.num_gmm_components, -1)  # torch.stack([ss.view(-1) for ss in std])
                 smean = torch.stack([stacked_means[selected_comp[i], i] for i in
                                      range(len(selected_comp))])
                 scv = torch.stack([stacked_cv[selected_comp[i], i] for i in
                                     range(len(selected_comp))])
                 std = torch.sqrt(scv)
+                noise = torch.randn_like(p)
                 gg = torch.addcmul(smean.reshape_as(noise), std_scale, noise,
                                    std.reshape_as(noise))
                 p.data.copy_(gg)
+                # print("%%%%% Sample %%%%%")
+                # print(gg)
+                # p.data.copy_(m[0])
+
 
     def copy_mean_to_params(self):
         for group in self.param_groups:
@@ -253,8 +255,10 @@ class VIOptimizer(SecondOrderOptimizer):
         self.set_random_seed()
 
         for _ in range(m):
+
             # sampling
             self.sample_params()
+
             # forward and backward
             ent_loss = 0
             for group in self.param_groups:
@@ -263,15 +267,10 @@ class VIOptimizer(SecondOrderOptimizer):
                                       in zip(params, group['mean'], group['cov'], group['pais'])]  # pais or log_pais
                 ent_loss += torch.sum(torch.stack([torch.sum(g) for g in group['q_entropy']]))
 
-            # forward and backward
             loss, output = closure(ent_loss)
             for p in params:
                 p.grad.add_(group['l2_reg'], p.data)  # Add derivative of prior
 
-            if torch.isnan(loss):
-                print("loss is nan")
-            if torch.isnan(torch.sum(output)):
-                print("output is nan")
             acc_loss.update(loss, scale=1/m)
             if output.ndim == 2:
                 prob = F.softmax(output, dim=1)
@@ -284,15 +283,14 @@ class VIOptimizer(SecondOrderOptimizer):
             # accumulate
             for group in self.param_groups:
                 params = group['params']
-
                 grads = [p.grad.data for p in params]
+                # print("%%%%%%%%%%%% this is grad %%%%%%%%%%%")
+                # print(grads)
                 group['acc_grads'].update(grads, scale=1/m/n)
-
                 group['acc_curv'].update(group['curv'].data, scale=1/m/n)
-
-                delta = self.calculate_deltas(group['mean'], group['cov'], group['pais'], params)
-
-                group['acc_delta'].update(delta)
+                delta = self.calculate_deltas(group['mean'],
+                                              group['cov'], group['pais'], params)
+                group['acc_delta'].update(delta, scale=1/m/n)
 
         loss, prob = acc_loss.get(), acc_prob.get()
 
@@ -308,15 +306,11 @@ class VIOptimizer(SecondOrderOptimizer):
 
         # update distribution
         for group in self.local_param_groups:
-
-            # update covariance
-            self.update_prec(group)
+            deltas = group['acc_delta'].get()
+            self.update_prec(group, deltas)
             self.update_cov(group)
-
-            # update mean
-            self.update_mean(group)
-
-            self.update_pais(group, loss)
+            self.update_mean(group, deltas)
+            self.update_pais(group, loss, deltas)
 
             # copy mean to param
             params = group['params']
@@ -333,38 +327,42 @@ class VIOptimizer(SecondOrderOptimizer):
 
         return loss, prob
 
-    def update_prec(self, group):
+    def update_prec(self, group, deltas):
         # prec = group['prec']
         beta = self.defaults['lr']
-        delta = group['acc_delta']
+        # delta = group['acc_delta']
 
         if group['prec'] is None or beta == 1:
             group['prec'] = [[d.clone() for _ in range(self.num_gmm_components)] for d in self.data]
         else:
-            # prior_hess = self._l2_reg
-            h_hess = group['curv'].data  # + prior_hess
+            h_hess = group['curv'].data
 
             group['prec'] = [[(hh*beta*d).add(p) for p, d in zip(p_list, d_list)]
-                        for p_list, hh, d_list in zip(group['prec'] , h_hess, delta._accumulation)]  # update rule
+                        for p_list, hh, d_list in zip(group['prec'] , h_hess, deltas)]  # update rule
 
     def update_cov(self, group):
         group['cov'] = [[1 / e for e in prec_list] for prec_list in group['prec']]
 
-    def update_mean(self, group):
+    def update_mean(self, group, deltas):
         means = group['mean']
-        deltas = group['acc_delta']._accumulation
+        # deltas = group['acc_delta']._accumulation
         cov = group['cov']
         for m_list, d_list, cov_list in zip(means, deltas, cov):
             for m, d, inv in zip(m_list, d_list, cov_list):
                 grad = m.grad
                 m.data.add_(-group['lr'], d * grad * inv)  #HERE: * group['ratio']
+                # print("%%%%%%%% update value of mean %%%%%%%%")
+                # print(d * grad * inv)
+                # print(inv)
+                # print(grad)
+                # print(d)
 
-    def update_pais(self, group, output):
+    def update_pais(self, group, output, deltas):
         num_components = self.defaults['num_gmm_components']
-        deltas = group['acc_delta']._accumulation
+        # deltas = group['acc_delta']._accumulation
         pais1 = group['pais']
         rhos1 = [[torch.log(p)-torch.log(p_list[-1]) for p in p_list] for p_list in pais1]
-        beta = 0.001#self.defaults['lr']
+        # beta = 0.001#self.defaults['lr']
         delta_K = [d_list[-1] for d_list in deltas] #last component for all param
 
         delta_diff = []
@@ -372,7 +370,7 @@ class VIOptimizer(SecondOrderOptimizer):
         for d_list, dk in zip(deltas, delta_K):
             delta_diff.append([d - dk for d in d_list])
 
-        rhos = [[(r - d)*output*beta for r, d in zip(r_list, d_list)] for r_list, d_list in zip(rhos1, delta_diff)]
+        rhos = [[(r - d)*output*group['lr'] for r, d in zip(r_list, d_list)] for r_list, d_list in zip(rhos1, delta_diff)]
         pais = [torch.softmax(torch.stack(r_list), dim=0) for r_list in rhos]
         if torch.isnan(torch.sum(torch.stack(pais))):
             print("booya")
