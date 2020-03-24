@@ -3,7 +3,7 @@ from torchsso import autograd  # NOQA
 from torchsso import utils  # NOQA
 
 from torchsso.curv.curvature import Curvature, DiagCurvature, KronCurvature  # NOQA
-from torchsso.curv.cov.linear import CovLinear, DiagCovLinear, KronCovLinear, DiagGMMLinear  # NOQA
+from torchsso.curv.cov.linear import CovLinear, DiagCovLinear, KronCovLinear  # NOQA
 from torchsso.curv.cov.conv import CovConv2d, DiagCovConv2d, KronCovConv2d  # NOQA
 from torchsso.curv.cov.batchnorm import CovBatchNorm1d, DiagCovBatchNorm1d, CovBatchNorm2d, DiagCovBatchNorm2d  # NOQA
 

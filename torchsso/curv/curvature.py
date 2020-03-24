@@ -139,7 +139,6 @@ class Curvature(object):
         self.update_in_forward(data_input)
 
     def backward_postprocess(self, module, grad_input, grad_output):
-        a = 1
         assert self._module == module
 
         index = 1 if self.bias else 0
@@ -149,14 +148,14 @@ class Curvature(object):
         setattr(module, 'grad_input', grad_input)
         setattr(module, 'grad_output', grad_output)
 
-        self.update_in_backward(grad_output)  # hessian of nn stored in curv.data
+        self.update_in_backward(grad_output)
 
         # adjust grad scale along with 'reduction' in loss function
-        # batch_size = grad_output.shape[0]
-        # self.adjust_data_scale(batch_size**2)
+        batch_size = grad_output.shape[0]
+        self.adjust_data_scale(batch_size**2)
 
     def adjust_data_scale(self, scale):
-        self._data = [[d.mul(scale) for d in d_list] for d_list in self._data]
+        self._data = [d.mul(scale) for d in self._data]
 
     def update_in_forward(self, data_input):
         pass
