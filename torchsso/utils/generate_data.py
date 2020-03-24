@@ -36,8 +36,8 @@ class TinyDataset(Dataset):
         self.mlp = TINY()
         self.samples = torch.FloatTensor(1000, 1).uniform_(-1, 1)
         mlp_output = self.mlp(self.samples)
-        # self.labels = torch.tensor([s for s in mlp_output])
-        self.labels = torch.tensor([int(s[1] > s[0]) for s in mlp_output])
+        self.labels = torch.tensor(mlp_output)
+        # self.labels = torch.tensor([int(s[1] > s[0]) for s in mlp_output])
 
     def __len__(self):
         return len(self.samples)
