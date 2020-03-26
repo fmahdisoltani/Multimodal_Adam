@@ -261,15 +261,18 @@ class VIOptimizer(SecondOrderOptimizer):
 
             # forward and backward
             ent_loss = 0
+            reg_loss = 0
             for group in self.param_groups:
                 params = group['params']
                 group['q_entropy'] = [log_gmm(p, m_list, s_list, pai_list) for p, m_list, s_list, pai_list
                                       in zip(params, group['mean'], group['cov'], group['pais'])]  # pais or log_pais
                 ent_loss += torch.sum(torch.stack([torch.sum(g) for g in group['q_entropy']]))
+                reg_loss += torch.sum(torch.stack([ group['l2_reg'] * p.data ** 2 for p in params]))
 
-            loss, output = closure(ent_loss)
-            for p in params:
-                p.grad.add_(group['l2_reg'], p.data)  # Add derivative of prior
+
+            loss, output = closure(ent_loss-reg_loss)
+            # for p in params:
+            #     p.grad.add_(group['l2_reg'], p.data)  # Add derivative of prior
 
             acc_loss.update(loss, scale=1/m)
             if output.ndim == 2:
