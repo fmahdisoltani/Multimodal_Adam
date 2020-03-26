@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import Dataset
 
-from examples.classification.models.tiny import TINY
+from examples.classification.models.tiny import TINY, TINY_GMM
 
 
 def log_normalize(x):
@@ -32,11 +32,17 @@ def mlp(**kwargs):
 
 
 class TinyDataset(Dataset):
-    def __init__(self):
-        self.mlp = TINY()
-        self.samples = torch.FloatTensor(1000, 1).uniform_(-1, 1)
-        mlp_output = self.mlp(self.samples)
+    def __init__(self, dataset_size=1000):
+        self.mlp = TINY_GMM()
+        self.samples = torch.FloatTensor(dataset_size, 1).uniform_(-1, 1)
+        mlp_output = torch.zeros_like(self.samples)
+        for i in range(dataset_size):
+            self.mlp.sample_weight()  # sample network weights for each datapoint
+            mlp_output[i]=self.mlp(self.samples[i])
+        print("data done"*100)
         self.labels = torch.tensor(mlp_output)
+        # self.labels = torch.tensor(self.mlp(self.samples))
+        a=0
         # self.labels = torch.tensor([int(s[1] > s[0]) for s in mlp_output])
 
     def __len__(self):
