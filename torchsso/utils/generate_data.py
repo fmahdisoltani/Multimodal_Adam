@@ -32,7 +32,7 @@ def mlp(**kwargs):
 
 
 class TinyDataset(Dataset):
-    def __init__(self, dataset_size=1000):
+    def __init__(self, dataset_size=100000):
         self.mlp = TINY_GMM()
         self.samples = torch.FloatTensor(dataset_size, 1).uniform_(-1, 1)
         mlp_output = torch.zeros_like(self.samples)

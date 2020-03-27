@@ -50,13 +50,13 @@ class TINY_GMM(nn.Module):
         n_hid = 1
         n_out = 2
         self.l1 = nn.Linear(1, n_hid, bias=False)
-        s1 = torch.nn.Parameter(torch.tensor([[1.]]).T)
-        self.l1.weight = s1
+        # s1 = torch.nn.Parameter(torch.tensor([[1.]]).T)
+        # self.l1.weight = s1
 
         # self.l2 = nn.Linear(n_hid, n_out, bias=False)
 
-        self.s1_mean = torch.tensor([1.])
-        self.s1_std = torch.tensor([.0003])
+        self.s1_mean = torch.tensor([3.])
+        self.s1_std = torch.tensor([10.])
         self.s1_pai = torch.tensor([1.])
 
     def sample_weight(self):

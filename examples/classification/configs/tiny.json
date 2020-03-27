@@ -7,12 +7,12 @@
   "random_horizontal_flip": false,
   "normalizing_data": true,
   "arch_file": "models/tiny.py",
-  "arch_name": "TINY",
+  "arch_name": "TINY_GMM",
   "arch_args": {},
   "optim_name": "VIOptimizer",
   "optim_args": {
     "curv_type": "GMM",
-    "num_gmm_components": 2,
+    "num_gmm_components": 1,
     "curv_shapes": {
       "Conv2d": "Diag",
       "Linear": "Diag",
