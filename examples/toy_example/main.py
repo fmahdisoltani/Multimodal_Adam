@@ -35,7 +35,7 @@ def main():
                         help='interval iterations to plot decision boundary')
     # Options
     parser.add_argument('--n_samples_for_mcplot', type=int, default=20,
-                        help='number of MC samples for plotting boundaries by MADAM')
+                        help='number of MC samples for plotting boundaries by mAdam')
     parser.add_argument('--no_cuda', action='store_true', default=False,
                         help='disables CUDA training')
     parser.add_argument('--log_file_name', type=str, default='log',
@@ -77,7 +77,7 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size)
 
     # Model arguments
-    model_kwargs = dict(input_size=2, output_size=None, hidden_sizes=[1])
+    model_kwargs = dict(input_size=2, output_size=None, hidden_sizes=[10])
 
     model1 = MLP(**model_kwargs)
     model1 = model1.to(device)
@@ -99,7 +99,7 @@ def main():
         "grad_ema_decay": 0.1,
         "grad_ema_type": "raw",
         "num_mc_samples": 1,
-        "val_num_mc_samples": 0,
+        "val_num_mc_samples": 100,
         "kl_weighting": 1,
         "init_precision": 1e-2,
         "prior_variance": 1,
@@ -109,7 +109,7 @@ def main():
 
     curv_kwargs={
         "damping": 0,
-        "ema_decay": 0.001
+        "ema_decay": 0.01
     }
     optimizer2 = torchsso.optim.VIOptimizer(model2, **optim_kwargs,
                                             dataset_size=len(train_loader.dataset),
@@ -177,11 +177,11 @@ def main():
                 ax2.set_ylabel('Input 2')
                 ax2.set_title(f'Entropy (Adam)')
 
-                # Entropy (MADAM)
+                # Entropy (mAdam)
                 ax3 = fig.add_subplot(gs[0, 2])
                 ax3.set_xlabel('Input 1')
                 ax3.set_ylabel('Input 2')
-                ax3.set_title(f'Entropy (MADAM)')
+                ax3.set_title(f'Entropy (mAdam)')
 
                 model1.eval()
                 model2.eval()
@@ -196,7 +196,7 @@ def main():
                 im = ax2.pcolormesh(xx, yy, entropy)
                 fig.colorbar(im, ax=ax2)
 
-                # (MADAM) get MC samples
+                # (mAdam) get MC samples
                 prob, probs = optimizer2.prediction(data_meshgrid, keep_probs=True)
                 prob = prob.view(xx.shape)
                 entropy = get_entropy(prob)
@@ -208,12 +208,12 @@ def main():
                 im = ax3.pcolormesh(xx, yy, entropy)
                 fig.colorbar(im, ax=ax3)
 
-                # (MADAM) get mean prediction
+                # (mAdam) get mean prediction
                 prob = optimizer2.prediction(data_meshgrid, mc=0).view(xx.shape)
                 pred = torch.round(prob).detach().cpu().numpy()
 
                 plot = ax1.contour(xx, yy, pred, colors=['red'], linewidths=[2])
-                plot.collections[len(plot.collections)//2].set_label('MADAM')
+                plot.collections[len(plot.collections)//2].set_label('mAdam')
 
                 # plot samples
                 for label, marker, color in zip([0, 1], ['o', 's'], ['white', 'gray']):
@@ -242,7 +242,7 @@ def main():
 
             i += 1
 
-        print(f'Train Epoch: {epoch+1}\tLoss(Adam): {loss1:.6f} Loss(MADAM): {loss2:.6f}')
+        print(f'Train Epoch: {epoch+1}\tLoss(Adam): {loss1:.6f} Loss(mAdam): {loss2:.6f}')
 
     # Create GIF from temp figures
     images = []
