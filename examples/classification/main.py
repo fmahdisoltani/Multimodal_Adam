@@ -283,12 +283,12 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
             setattr(model, attr, param.detach().clone())
 
         # update params
-        def closure(ent_loss):
+        def closure(surrogate_loss):
             optimizer.zero_grad()
             output = model(data)
             criterion = torch.nn.MSELoss()
-            loss = criterion(output, target) - ent_loss
-            # loss = F.cross_entropy(output, target) + ent_loss
+            loss = criterion(output, target) - surrogate_loss
+            # loss = F.cross_entropy(output, target) + surrogate_loss
             loss.backward(create_graph=args.create_graph)
             if torch.isnan(torch.sum(loss)):
                 print("inside closure isnan")

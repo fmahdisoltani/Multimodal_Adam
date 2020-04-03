@@ -207,8 +207,8 @@ class DiagGMMLinear(DiagCurvature):
     #             for e, e_max in zip(e_list, e_max_list):
     #                 torch.max(e, e_max, out=e_max)
 
-    def adjust_data_scale(self, scale):
-        self._data = [[d.mul(scale) for d in d_list] for d_list in self._data]
+    # def adjust_data_scale(self, scale):
+    #     self._data = [[d.mul(scale) for d in d_list] for d_list in self._data]
 
     def update_in_backward(self, grad_output):  # for GMM
         data_input = getattr(self._module, 'data_input', None)  # n x f_in
@@ -225,6 +225,11 @@ class DiagGMMLinear(DiagCurvature):
         data_w = data_w_elem #[data_w_elem for c in range(self.num_gmm_components)]
 
         self._data = [data_w]
+        # print("self.data is updated " *100)
+        # print(in_in)
+        # print(grad_grad)
+        # print(data_w)
+
 
         if self.bias:
             data_b = grad_grad.mean(dim=0) #[grad_grad.mean(dim=0) for _ in range(self.num_gmm_components)]  # f_out x 1
