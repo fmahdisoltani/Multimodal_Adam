@@ -100,7 +100,7 @@ class VIOptimizer(SecondOrderOptimizer):
 
         for group in self.param_groups:
             group['std_scale'] = 0 if group['l2_reg'] == 0 else std_scale
-            # group['mean'] = [[torch.ones_like(p) for _ in range(num_gmm_components)] for p in group['params']]
+            # group['mean'] = [[torch.ones_like(p)*0.3 for _ in range(num_gmm_components)] for p in group['params']]
             group['mean'] = [[p.data.detach().clone()+i*.1 for i in range(num_gmm_components)] for p in group['params']]
 
             # group['mean'] = [[torch.FloatTensor(p.shape).uniform_(-4, 4) for _ in range(num_gmm_components)] for p in group['params']]
@@ -166,37 +166,42 @@ class VIOptimizer(SecondOrderOptimizer):
     def sample_params(self):
 
         for group in self.param_groups:
-            params, mean_list = group['params'], group['mean']
-            cov = group['cov']
-            pais = group['pais']
-            std_scale = 1
+            std_scale = group['std_scale']
 
-            for p, m, cv, pai in zip(params, mean_list, cov, pais):  # sample from GMM for each param
+            for params, means, covs, pais in zip(group['params'], group['mean'],
+                                                 group['cov'], group['pais']):  # sample from GMM for each param
                 # torch.stack([pp.view(-1) for pp in pai])
-                stacked_pais = torch.stack(pai).view(self.num_gmm_components, -1)
+                # noise = torch.randn_like(means[0])
+                # params.data.copy_(
+                #     torch.addcmul(means[0], group['std_scale'], noise,
+                #                   torch.sqrt(covs[0])))
+                noise = torch.randn_like(params)
+                stacked_pais = torch.stack(pais).view(self.num_gmm_components, -1)
                 selected_comp = torch.multinomial(stacked_pais.T, 1)
-                stacked_means = torch.stack(m).view(self.num_gmm_components, -1)  # ([mm.view(-1) for mm in m])
-                stacked_cv = torch.stack(cv).view(self.num_gmm_components, -1)  # torch.stack([ss.view(-1) for ss in std])
-                smean = torch.stack([stacked_means[selected_comp[i], i] for i in
+                # selected_comp = torch.zeros_like(selected_comp)
+                stacked_means = torch.stack(means).view(self.num_gmm_components, -1)  # ([mm.view(-1) for mm in m])
+                stacked_cv = torch.stack(covs).view(self.num_gmm_components, -1)  # torch.stack([ss.view(-1) for ss in std])
+                selected_mean = torch.stack([stacked_means[selected_comp[i], i] for i in
                                      range(len(selected_comp))])
-                scv = torch.stack([stacked_cv[selected_comp[i], i] for i in
+                selected_cov = torch.stack([stacked_cv[0, i] for i in
                                     range(len(selected_comp))])
-                std = torch.sqrt(scv)
-                noise = torch.randn_like(p)
-                gg = torch.addcmul(smean.reshape_as(noise), std_scale, noise,
+                std = torch.sqrt(selected_cov)
+
+                gg = torch.addcmul(selected_mean.reshape_as(noise), std_scale, noise,
                                    std.reshape_as(noise))
-                p.data.copy_(gg)
+                params.data.copy_(gg)
                 # print("%%%%% Sample %%%%%")
                 # print(gg)
                 # p.data.copy_(m[0])
-    # def sample_params(self):
-    #
-    #     for group in self.param_groups:
-    #         # sample from posterior
-    #         for params, means, covs in zip(group['params'], group['mean'], group['cov']):
-    #
-    #             noise = torch.randn_like(means[0])
-    #             params.data.copy_(torch.addcmul(means[0],  group['std_scale'], noise, torch.sqrt(covs[0])))
+    def sample_params1(self):
+
+        for group in self.param_groups:
+            # sample from posterior
+            for params, means, covs in zip(group['params'], group['mean'], group['cov']):
+
+                noise = torch.randn_like(params)
+                params.data.copy_(torch.addcmul(means[0],  group['std_scale'], noise, torch.sqrt(covs[0])))
+                a = 1/0
 
     def copy_mean_to_params(self):
         for group in self.param_groups:
@@ -276,7 +281,8 @@ class VIOptimizer(SecondOrderOptimizer):
                 group['q_entropy'] = [log_gmm(p, m_list, s_list, pai_list) for p, m_list, s_list, pai_list
                                       in zip(params, group['mean'], group['cov'], group['pais'])]  # pais or log_pais
                 ent_loss += torch.sum(torch.stack([torch.sum(g) for g in group['q_entropy']]))
-                reg_loss += torch.sum(torch.stack([group['l2_reg'] * p.data ** 2 for p in params]))
+                reg_loss += sum([torch.sum(group['l2_reg'] * p.data ** 2) for p in params])
+                # reg_loss += torch.sum(torch.stack([group['l2_reg'] * p.data ** 2 for p in params]))
 
             surrogate_loss = ent_loss-reg_loss
             loss, output, network_loss = closure(surrogate_loss)
@@ -319,6 +325,11 @@ class VIOptimizer(SecondOrderOptimizer):
 
         # update distribution
         for group in self.local_param_groups:
+            # print("O" * 10)
+            # print(group["mean"])
+            # print(group["pais"])
+            # print(group["cov"])
+            # print("P" * 10)
             deltas = group['acc_delta'].get()
             self.update_prec(group, deltas)
             self.update_cov(group)
@@ -332,11 +343,7 @@ class VIOptimizer(SecondOrderOptimizer):
                 p.grad.copy_(m_list[0].grad)  # TODO: set it to a sample? or the comp with highest pai
 
             self.adjust_kl_weighting()
-            print("O"*10)
-            print(group["mean"])
-            print(group["pais"])
-            print(group["cov"])
-            print("P"*10)
+
 
         return loss, prob, network_loss
 
@@ -385,7 +392,8 @@ class VIOptimizer(SecondOrderOptimizer):
 
         rhos = [[(r - d)*output*group['lr'] for r, d in zip(r_list, d_list)] for r_list, d_list in zip(rhos1, delta_diff)]
         pais = [torch.softmax(torch.stack(r_list), dim=0) for r_list in rhos]
-        if torch.isnan(torch.sum(torch.stack(pais))):
+        # if torch.isnan(torch.sum(torch.stack(pais))):
+        if torch.isnan(sum([torch.sum(p) for p in pais])):
             print("booya")
 
         group['pais'] = [[pai_list[i].data.detach() for i in range(num_components)] for pai_list in pais]
