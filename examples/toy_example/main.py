@@ -44,10 +44,12 @@ def main():
                         help='directory to keep tmp figures')
     parser.add_argument('--keep_figures', action='store_true', default=False,
                         help='whether keep tmp figures after creating gif')
-    parser.add_argument('--out', type=str, default='boundary.gif',
+    parser.add_argument('--out', type=str, default='boundary_mm.gif',
                         help='output gif file')
     parser.add_argument('--seed', type=int, default=1,
                         help='random seed')
+    parser.add_argument('--hid_size', type=int, default=10,
+                        help='number of hidden units')
 
     args = parser.parse_args()
 
@@ -77,7 +79,7 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size)
 
     # Model arguments
-    model_kwargs = dict(input_size=2, output_size=None, hidden_sizes=[10])
+    model_kwargs = dict(input_size=2, output_size=None, hidden_sizes=[args.hid_size])
 
     model1 = MLP(**model_kwargs)
     model1 = model1.to(device)
@@ -88,7 +90,7 @@ def main():
     # optimizer2 = torchsso.optim.VIOptimizer(model2, dataset_size=len(train_loader.dataset))
     optim_kwargs = {
         "curv_type": "GMM",
-        "num_gmm_components": 1,
+        "num_gmm_components": 4,
         "curv_shapes": {
           "Conv2d": "Diag",
           "Linear": "Diag",
@@ -98,7 +100,7 @@ def main():
         "lr": 1e-3,
         "grad_ema_decay": 0.1,
         "grad_ema_type": "raw",
-        "num_mc_samples": 1,
+        "num_mc_samples": 100,
         "val_num_mc_samples": 100,
         "kl_weighting": 1,
         "init_precision": 1e-2,
@@ -291,8 +293,11 @@ class MLP(nn.Module):
         else:
             # Neural network
             features = zip([self.input_size] + hidden_sizes[:-1], hidden_sizes)
-            self.hidden_layers = nn.ModuleList([nn.Linear(in_features, out_features, bias=False) for in_features, out_features in features])
-            self.output_layer = nn.Linear(hidden_sizes[-1], self.output_size, bias=False)
+            self.hidden_layers = nn.ModuleList([nn.Linear(in_features, out_features, bias=True) for in_features, out_features in features])
+            self.output_layer = nn.Linear(hidden_sizes[-1], self.output_size, bias=True)
+            # for h in self.hidden_layers:
+            #     h.weight = torch.nn.Parameter(torch.ones_like(h.weight) * 0.2)
+            # self.output_layer.weight = torch.nn.Parameter(torch.ones_like(self.output_layer.weight))
 
     def forward(self, x):
         x = x.view(-1, self.input_size)
