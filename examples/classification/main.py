@@ -286,18 +286,21 @@ def train(model, device, train_loader, optimizer, scheduler, epoch, args, logger
         def closure(surrogate_loss):
             optimizer.zero_grad()
             output = model(data)
-            criterion = torch.nn.MSELoss()
-            loss = criterion(output, target) - surrogate_loss
+            # criterion = torch.nn.MSELoss()
+            # loss = criterion(output, target) - surrogate_loss
+            criterion = F.cross_entropy
+            network_loss = criterion(output, target)
+            total_loss = network_loss - surrogate_loss
             # loss = F.cross_entropy(output, target) + surrogate_loss
-            loss.backward(create_graph=args.create_graph)
-            if torch.isnan(torch.sum(loss)):
+            total_loss.backward(create_graph=args.create_graph)
+            if torch.isnan(torch.sum(total_loss)):
                 print("inside closure isnan")
-            return loss, output
+            return total_loss, output, network_loss
 
         if isinstance(optimizer, SecondOrderOptimizer) and optimizer.curv_type == 'Fisher':
             closure = torchsso.get_closure_for_fisher(optimizer, model, data, target, **args.fisher_args)
 
-        loss, output = optimizer.step(closure=closure)
+        total_loss, output, loss = optimizer.step(closure=closure)
 
         pred = output.argmax(dim=1, keepdim=True)
         correct = pred.eq(target.view_as(pred)).sum().item()
@@ -386,7 +389,8 @@ def validate(model, device, val_loader, optimizer):
             else:
                 output = model(data)
 
-            criterion = torch.nn.MSELoss()
+            # criterion = torch.nn.MSELoss()
+            criterion = F.cross_entropy
             val_loss = criterion(output, target)
             # val_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
