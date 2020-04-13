@@ -101,9 +101,8 @@ class VIOptimizer(SecondOrderOptimizer):
         for group in self.param_groups:
             group['std_scale'] = 0 if group['l2_reg'] == 0 else std_scale
             # group['mean'] = [[torch.ones_like(p)*0.3 for _ in range(num_gmm_components)] for p in group['params']]
-            group['mean'] = [[p.data.detach().clone()+i*.1 for i in range(num_gmm_components)] for p in group['params']]
-
-            # group['mean'] = [[torch.FloatTensor(p.shape).uniform_(-4, 4) for _ in range(num_gmm_components)] for p in group['params']]
+            # group['mean'] = [[p.data.detach().clone()+i*.1 for i in range(num_gmm_components)] for p in group['params']]
+            group['mean'] = [p.data.detach().clone().repeat(torch.Size([num_gmm_components] + [1] * len(p.shape))) for p in group['params']]
             group['prec'] = [[torch.ones_like(p) * init_precision for _ in
                               range(num_gmm_components)] for p in
                              group['params']]
@@ -169,30 +168,35 @@ class VIOptimizer(SecondOrderOptimizer):
             std_scale = group['std_scale']
 
             for params, means, covs, pais in zip(group['params'], group['mean'],
-                                                 group['cov'], group['pais']):  # sample from GMM for each param
-                # torch.stack([pp.view(-1) for pp in pai])
-                # noise = torch.randn_like(means[0])
-                # params.data.copy_(
-                #     torch.addcmul(means[0], group['std_scale'], noise,
-                #                   torch.sqrt(covs[0])))
+                                                 group['cov'], group['pais']):
                 noise = torch.randn_like(params)
                 stacked_pais = torch.stack(pais).view(self.num_gmm_components, -1)
                 selected_comp = torch.multinomial(stacked_pais.T, 1)
-                # selected_comp = torch.zeros_like(selected_comp)
-                stacked_means = torch.stack(means).view(self.num_gmm_components, -1)  # ([mm.view(-1) for mm in m])
-                stacked_cv = torch.stack(covs).view(self.num_gmm_components, -1)  # torch.stack([ss.view(-1) for ss in std])
+
+                stacked_means = means.view(self.num_gmm_components, -1)
+                import timeit
+                tic = timeit.default_timer()
                 mask = torch.zeros_like(stacked_means).scatter_(0,selected_comp.T, 1.)
                 selected_mean = torch.sum(stacked_means.mul(mask), dim=0)
+                # toc = timeit.default_timer()
+                # print(toc-tic)
 
-                selected_cov = torch.sum(stacked_cv.mul(mask), dim=0)
+
+
+                # tic = timeit.default_timer()
+                # selected_mean = torch.stack([stacked_means[selected_comp[i], i] for i in
+                #                      range(len(selected_comp))])
+                # toc = timeit.default_timer()
+                # print(toc-tic)
+                stacked_cv = torch.stack(covs).view(self.num_gmm_components, -1)
+                selected_cov = torch.stack([stacked_cv[selected_comp[i], i] for i in
+                                    range(len(selected_comp))])
                 std = torch.sqrt(selected_cov)
 
                 gg = torch.addcmul(selected_mean.reshape_as(noise), std_scale, noise,
                                    std.reshape_as(noise))
                 params.data.copy_(gg)
-                # print("%%%%% Sample %%%%%")
-                # print(gg)
-                # p.data.copy_(m[0])
+
     def sample_params1(self):
 
         for group in self.param_groups:
@@ -210,7 +214,7 @@ class VIOptimizer(SecondOrderOptimizer):
                 p.data.copy_(m[0].data)
                 if getattr(p, 'grad', None) is not None \
                         and getattr(m, 'grad', None) is not None:
-                    p.grad.copy_(m.grad)
+                    p.grad.copy_(m.grad[0])
 
     def adjust_kl_weighting(self):
         warmup_steps = self.defaults['warmup_kl_weighting_steps']
@@ -239,10 +243,11 @@ class VIOptimizer(SecondOrderOptimizer):
     def backward_postprocess(self):  # acc_grad => group[target].grad
         for group in self.param_groups:
             acc_grads = group['acc_grads'].get()
-            for p_list, acc_grad in zip(group['mean'], acc_grads):
-                for p in p_list:
-                    if acc_grad is not None:
-                        p.grad = acc_grad.clone()
+            for mean, acc_grad in zip(group['mean'], acc_grads):
+                # for p in p_list:
+                if acc_grad is not None:
+                    mean.grad =acc_grad.clone().\
+                        repeat(torch.Size([self.num_gmm_components] + [1] * (len(mean.shape)-1)))
 
             curv = group['curv']
             if curv is not None:
@@ -338,9 +343,9 @@ class VIOptimizer(SecondOrderOptimizer):
 
             # copy mean to param
             params = group['params']
-            for p, m_list in zip(params,  group['mean']):
-                p.data.copy_(m_list[0].data)
-                p.grad.copy_(m_list[0].grad)  # TODO: set it to a sample? or the comp with highest pai
+            for p, mean in zip(params,  group['mean']):
+                p.data.copy_(mean[0].data)
+                p.grad.copy_(mean.grad[0])  # TODO: set it to a sample? or the comp with highest pai
 
             self.adjust_kl_weighting()
 
@@ -364,13 +369,13 @@ class VIOptimizer(SecondOrderOptimizer):
         group['cov'] = [[1 / e for e in prec_list] for prec_list in group['prec']]
 
     def update_mean(self, group, deltas):
-        means = group['mean']
+
         # deltas = group['acc_delta']._accumulation
         cov = group['cov']
-        for m_list, d_list, cov_list in zip(means, deltas, cov):
-            for m, d, inv in zip(m_list, d_list, cov_list):
-                grad = m.grad
-                m.data.add_(-group['lr'], d * grad * inv)  #HERE: * group['ratio']
+        for mean, d_list, cov_list in zip(group['mean'], deltas, cov):
+            for d, inv in zip(d_list, cov_list):
+                grad = mean.grad
+                mean.data.add_(-group['lr'], d * grad * inv)  #HERE: * group['ratio']
                 # print("%%%%%%%% update value of mean %%%%%%%%")
                 # print(d * grad * inv)
                 # print(inv)
