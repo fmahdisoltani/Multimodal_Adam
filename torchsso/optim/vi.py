@@ -181,10 +181,10 @@ class VIOptimizer(SecondOrderOptimizer):
                 # selected_comp = torch.zeros_like(selected_comp)
                 stacked_means = torch.stack(means).view(self.num_gmm_components, -1)  # ([mm.view(-1) for mm in m])
                 stacked_cv = torch.stack(covs).view(self.num_gmm_components, -1)  # torch.stack([ss.view(-1) for ss in std])
-                selected_mean = torch.stack([stacked_means[selected_comp[i], i] for i in
-                                     range(len(selected_comp))])
-                selected_cov = torch.stack([stacked_cv[0, i] for i in
-                                    range(len(selected_comp))])
+                mask = torch.zeros_like(stacked_means).scatter_(0,selected_comp.T, 1.)
+                selected_mean = torch.sum(stacked_means.mul(mask), dim=0)
+
+                selected_cov = torch.sum(stacked_cv.mul(mask), dim=0)
                 std = torch.sqrt(selected_cov)
 
                 gg = torch.addcmul(selected_mean.reshape_as(noise), std_scale, noise,
@@ -201,7 +201,7 @@ class VIOptimizer(SecondOrderOptimizer):
 
                 noise = torch.randn_like(params)
                 params.data.copy_(torch.addcmul(means[0],  group['std_scale'], noise, torch.sqrt(covs[0])))
-                a = 1/0
+
 
     def copy_mean_to_params(self):
         for group in self.param_groups:
