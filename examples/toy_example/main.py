@@ -90,7 +90,7 @@ def main():
     # optimizer2 = torchsso.optim.VIOptimizer(model2, dataset_size=len(train_loader.dataset))
     optim_kwargs = {
         "curv_type": "GMM",
-        "num_gmm_components": 4,
+        "num_gmm_components": 3,
         "curv_shapes": {
           "Conv2d": "Diag",
           "Linear": "Diag",
@@ -100,7 +100,7 @@ def main():
         "lr": 1e-3,
         "grad_ema_decay": 0.1,
         "grad_ema_type": "raw",
-        "num_mc_samples": 100,
+        "num_mc_samples": 10,
         "val_num_mc_samples": 100,
         "kl_weighting": 1,
         "init_precision": 1e-2,
