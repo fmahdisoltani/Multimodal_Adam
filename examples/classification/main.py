@@ -76,7 +76,7 @@ def main():
                         help='how many epochs to wait before logging training status')
     parser.add_argument('--resume', type=str, default=None,
                         help='checkpoint path for resume training')
-    parser.add_argument('--out', type=str, default='result',
+    parser.add_argument('--out', type=str, default='result_mnist',
                         help='dir to save output files')
     parser.add_argument('--config', default='configs/cifar10/lenet_kfac.json',
                         help='config file path')
