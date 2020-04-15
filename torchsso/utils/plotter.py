@@ -21,7 +21,8 @@ from matplotlib.ticker import MultipleLocator
 
 colors = ['gray', 'gray', 'black', 'gray']
 
-xlabels = {'epoch': 'epoch',
+xlabels = {'iteration': 'iteration',
+           'epoch': 'epoch',
            'elapsed_time': 'wall time (min)'}
 
 ylabels = {'accuracy': 'accuracy [%]',
@@ -42,7 +43,7 @@ def plot(idx, label, log_json, xtarget, ytarget, ax):
     if ytarget == 'accuracy':
         y_val = df['accuracy']
     else:
-        y_val = -df['loss']
+        y_val = df['loss']
 
     index = y_val.notnull()
     y_val = y_val[index]
@@ -73,21 +74,21 @@ def main(labels, logfiles, xtarget, xlabel, figpath):
     gs = fig.add_gridspec(1, 2)
 
     left = 0
-    right = 90
+    right = 50
     # Loss
     ax = fig.add_subplot(gs[0, 0])
     plot_all(ax, fig, labels, logfiles, xtarget, xlabel, 'loss', ylabels['loss'], right)
-    ax.set_ylim(bottom=-3, top=None)
-    ax.set_xlim(left=left, right=right)
+    ax.set_ylim(bottom=0, top=None)
+    ax.set_xlim(left=left, right=None)
     # plt.yticks([-3.0,-2.5,-2.0,-1.5])
     # plt.yticks([-3.0,-2.5,-2.0,-1.5])
 
     # Accuracy
     ax = fig.add_subplot(gs[0, 1])
     plot_all(ax, fig, labels, logfiles, xtarget, xlabel, 'accuracy', ylabels['accuracy'], right)
-    ax.set_ylim(bottom=20, top=None)
-    ax.set_xlim(left=left, right=right)
-    plt.yticks([30,40,50,60,70])
+    ax.set_ylim(bottom=0, top=None)
+    ax.set_xlim(left=left, right=None)
+    # plt.yticks([30,40,50,60,70])
     ax.legend(frameon=True, fontsize=20, loc='lower right')
 
     fig.tight_layout()
@@ -100,8 +101,8 @@ if __name__ == '__main__':
     # xtarget = sys.argv[2]
     # figname = sys.argv[3]
     figname = "loss.jpg"
-    logdir = "/Users/farzaneh/PycharmProjects/multimodal_madam/examples/classification/result_mnist"
-    xtarget = "epoch"
+    logdir = "/Users/farzaneh/PycharmProjects/multimodal_madam/examples/classification/result_mnist_c2"
+    xtarget = "iteration"
     ytarget = "loss"
 
     logfiles_path = os.path.join(logdir, 'logfiles.csv')

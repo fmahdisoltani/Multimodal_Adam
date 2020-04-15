@@ -14,6 +14,8 @@ import torchsso
 from sklearn.datasets import make_blobs
 import numpy as np
 import matplotlib.pyplot as plt
+from torchsso.utils import Logger
+
 plt.rcParams['font.size'] = 18
 
 
@@ -27,7 +29,7 @@ def main():
     parser.add_argument('--random_state', type=int, default=5,
                         help='random seed for data creation')
     # Training
-    parser.add_argument('--epochs', type=int, default=50,
+    parser.add_argument('--epochs', type=int, default=5,
                         help='number of epochs to train')
     parser.add_argument('--batch_size', type=int, default=10,
                         help='input batch size for training')
@@ -90,17 +92,17 @@ def main():
     # optimizer2 = torchsso.optim.VIOptimizer(model2, dataset_size=len(train_loader.dataset))
     optim_kwargs = {
         "curv_type": "GMM",
-        "num_gmm_components": 3,
+        "num_gmm_components": 4,
         "curv_shapes": {
           "Conv2d": "Diag",
           "Linear": "Diag",
           "BatchNorm1d": "Diag",
           "BatchNorm2d": "Diag"
         },
-        "lr": 1e-3,
+        "lr": 5e-2,
         "grad_ema_decay": 0.1,
         "grad_ema_type": "raw",
-        "num_mc_samples": 10,
+        "num_mc_samples": 100,
         "val_num_mc_samples": 100,
         "kl_weighting": 1,
         "init_precision": 1e-2,
@@ -120,6 +122,11 @@ def main():
 
     # Show all config
     print('===========================')
+    print(f'num_gmm_components: {optim_kwargs["num_gmm_components"]}')
+    print(f'num_mc_samples:{optim_kwargs["num_mc_samples"]}')
+    print(f'val_num_mc_samples:{optim_kwargs["val_num_mc_samples"]}')
+    print(f'hidden_units:{args.hid_size}')
+
     print(f'model class: {model1.__class__}')
     for m in model1.children():
         print(m)
@@ -133,6 +140,11 @@ def main():
 
     figpaths = []
     i = 0  # iteration
+
+    # Setup logger
+    logger = Logger('result', args.log_file_name)
+    logger.start()
+
 
     # Run training
     for epoch in range(args.epochs):
@@ -245,6 +257,14 @@ def main():
             i += 1
 
         print(f'Train Epoch: {epoch+1}\tLoss(Adam): {loss1:.6f} Loss(mAdam): {loss2:.6f}')
+
+        # save log
+        iteration = epoch * len(train_loader)
+        log = {'epoch': epoch, 'iteration': iteration,
+              'loss': loss2.data.detach().numpy().item(),
+               'lr': optimizer2.param_groups[0]['lr'],
+               'momentum': optimizer2.param_groups[0].get('momentum', 0)}
+        logger.write(log)
 
     # Create GIF from temp figures
     images = []
